@@ -1,0 +1,11 @@
+# This is a record of some helpful commands related to the subtrees of this repository
+
+# Initially adding subtrees
+git remote add -f srk -t main -m main http://github.com/zkincaid/srk.git
+git subtree add --prefix srk srk --squash
+
+# Updating subtrees 
+#    NOTE: Only a maintainer has to do these steps.
+#          Everybody else just does a single git pull.
+git fetch srk 
+git subtree pull --prefix srk srk main --squash
