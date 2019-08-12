@@ -3,9 +3,17 @@
    A weighted graph is a graph where edges are labeled by elements of
    a regular algebra. *)
 
-type 'a weighted_graph
+(** Unweighted graphs *)
+module U : Graph.Sig.G with type V.t = int
 
-type 'a t = 'a weighted_graph
+module IntPair : sig
+  type t = int * int 
+  val equal : t -> t -> bool
+  val compare : t -> t -> int
+  val hash : t -> int
+end
+
+module M : BatMap.S with type key = (int * int)
 
 (** Regular algebra signature *)
 type 'a algebra =
@@ -15,8 +23,13 @@ type 'a algebra =
     zero : 'a;
     one : 'a }
 
-(** Unweighted graphs *)
-module U : Graph.Sig.G with type V.t = int
+type 'a weighted_graph =
+  { graph : U.t;
+    labels : 'a M.t;
+    algebra : 'a algebra }
+
+type 'a t = 'a weighted_graph
+
 
 type vertex = int
 

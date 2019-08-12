@@ -7,7 +7,7 @@ type 'a label = 'a WeightedGraph.label =
 module Make
     (C : sig
        type t
-       val context : t Syntax.context
+       val context : t context
      end)
     (Var : sig
        type t
