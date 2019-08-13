@@ -2,6 +2,7 @@
 open Arg
 
 module Log = Srk.Log
+(*open Srk*)
 
 (*
 let parameterized   = ref false
@@ -201,13 +202,5 @@ let parse filename =
   go (!parsers)
 
 let _ = 
-  register_parser ("smt2",
-                   fun filename ->
-                     let chan = open_in filename in
-                     (*let file = CfgIr.read_file chan in
-                     let open Core in*)
-                     close_in chan;
-                     ()
-                     (*CfgIr.iter_defs (fun def -> Def.set_max_id def.did) file;
-                     file*))
+  register_parser ("smt2", Chc.parse_smt2)
 
