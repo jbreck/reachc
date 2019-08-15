@@ -109,7 +109,13 @@ let parse_smt2 filename =
       List.iter (fun (nam,typ) -> Format.printf "%s," nam) vars;
       Format.printf "]@.";
       Format.printf "     Hyp: %a@." (Syntax.Formula.pp srk) hyp;
-      Format.printf "    Conc: %a@." (Syntax.Formula.pp srk) conc
+      Format.printf "    Conc: %a@." (Syntax.Formula.pp srk) conc;
+
+      let hyp_preds = find_predicates srk hyp in
+      Format.printf "  LPreds: ["; 
+      List.iter (fun p -> Format.printf "%a," 
+        (Syntax.pp_symbol srk) (Syntax.symbol_of_int p)) hyp_preds;
+      Format.printf "]@.";
   ) !rules;
 
   List.iter (fun (hyp,conc,vars) ->
