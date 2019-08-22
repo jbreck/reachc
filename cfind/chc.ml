@@ -279,7 +279,6 @@ let build_linked_formulas srk1 srk2 phi query_pred =
             (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.one), 
           [])
         | `Proposition (`App (f, args)) ->
-          Format.printf "Saw Proposition: %a@." (Syntax.Formula.pp srk1) expr;
           (* A horn-clause-predicate occurrence *)
           let fsym = rename_pred f in 
           let fnumber = Syntax.int_of_symbol fsym in
