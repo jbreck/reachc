@@ -30,11 +30,13 @@ end*)
 module CallGraphSCCs = Graph.Components.Make(CallGraph)
 
 (* Disturbs (simple-minded) format invariant of Horn clauses: *)
-(*module Ctx = Syntax.MakeSimplifyingContext ()*) 
+module Sctx = Syntax.MakeSimplifyingContext ()
+
 (* Use this instead, so as to preserve the format invariant: *)
 module Ctx = Syntax.MakeContext ()
 
-let srk = Ctx.context
+let parsingCtx = Ctx.context
+let srk = Sctx.context
 
 let is_syntactic_false srk expr = 
   match Syntax.destruct srk expr with
@@ -158,8 +160,26 @@ type 'a linked_formula = predicate_occurrence *
                          (predicate_occurrence list) *
                          'a Srk.Syntax.Formula.t
 
-let linked_formula_of_rule hyp conc vars =
-  ()
+let print_pred_occ srk pred_occ = 
+    let (pred_num, var_symbols) = pred_occ in 
+    let n_vars = List.length var_symbols in 
+    Format.printf "%s(" (Syntax.show_symbol srk (Syntax.symbol_of_int pred_num));
+    List.iteri 
+      (fun i sym ->
+        Format.printf "%s" (Syntax.show_symbol srk sym);
+        if i != n_vars - 1 then Format.printf ",")
+      var_symbols;
+    Format.printf ")"
+
+let print_linked_formula srk rule = 
+    let (conc_pred, hyp_preds, phi) = rule in
+    Format.printf "{ ";
+    List.iter (fun pred -> print_pred_occ srk pred; Format.printf "; ")
+      hyp_preds;
+    Format.printf "%a } -> " (Syntax.Formula.pp srk) phi;
+    print_pred_occ srk conc_pred;
+    Format.printf "@."
+      
   (*
   let alg = function
     | `And conjuncts -> List.concat conjuncts
@@ -209,14 +229,14 @@ let load_smtlib2 ?(context=Z3.mk_context []) srk str =
  * 1. Replace int variable occurrences with constants
  * 2. 
  *)
-let build_linked_formulas srk1 srk2 vars phi query_pred =
+let build_linked_formulas srk1 srk2 phi query_pred =
   let rec get_rule vars rules phi = 
     match Syntax.destruct srk1 phi with
     | `Quantify (`Forall, nam, typ, expr) ->
        get_rule ((nam,typ)::vars) rules expr
     | `Or [nothyp; conc] ->
        (match Syntax.destruct srk1 nothyp with 
-       | `Not (hyp) -> (hyp,conc,List.rev vars)::rules
+       | `Not (hyp) -> (hyp,conc,vars)::rules (* reverse? *)
        | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) phi;
               failwith "Unrecognized rule format (No negated hypothesis)")
     | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) phi;
@@ -232,15 +252,11 @@ let build_linked_formulas srk1 srk2 vars phi query_pred =
       (*allow*) (*get_rule [] [] phi*)
       (*forbid*) failwith "Currently forbidden: single-clause CHC program"
     in 
-  (*let rename_internal sym = 
+  let rename_pred_internal sym = 
     let name = Syntax.show_symbol srk1 sym in
-    let typ = Syntax.typ_symbol srk1 sym in
-    match typ with 
-    | `TyInt 
-    | `TyBool -> Syntax.mk_symbol srk2 ~name:name `TyInt 
-    | `TyReal -> failwith "Unrecognized rule format (Real-valued variable)"
+    Syntax.mk_symbol srk2 ~name:name `TyBool
     in
-  let rename = Memo.memo rename_internal in*)
+  let rename_pred = Memo.memo rename_pred_internal in
   let linked_formula_of_rule (hyp,conc,vars) = 
     let var_to_skolem_internal var = 
       (let (name, typ) = List.nth vars var in
@@ -263,8 +279,9 @@ let build_linked_formulas srk1 srk2 vars phi query_pred =
             (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.one), 
           [])
         | `Proposition (`App (f, args)) ->
+          Format.printf "Saw Proposition: %a@." (Syntax.Formula.pp srk1) expr;
           (* A horn-clause-predicate occurrence *)
-          let fsym = var_to_skolem (Syntax.int_of_symbol f) in 
+          let fsym = rename_pred f in 
           let fnumber = Syntax.int_of_symbol fsym in
           let argsymbols = 
             (List.map
@@ -403,104 +420,110 @@ let parse_smt2 filename =
   let str = really_input_string chan (in_channel_length chan) in
   close_in chan;
   let z3ctx = Z3.mk_context [] in
-  let phi = SrkZ3.load_smtlib2 ~context:z3ctx srk str in
+  let phi = SrkZ3.load_smtlib2 ~context:z3ctx parsingCtx str in
+  let query_sym = Syntax.mk_symbol srk ~name:"QUERY" `TyBool in
+  (*let query_pred = Syntax.mk_app parsingCtx query_sym [] in*)
+  let query_int = Syntax.int_of_symbol query_sym in  
+  let rules = build_linked_formulas parsingCtx srk phi query_int in 
+  let _ = List.iter (fun rule -> print_linked_formula srk rule) rules in 
+
   (*let phi = load_smtlib2 ~context:z3ctx srk str in*)
   (*Format.printf "Received formula: @.  %a @.@." (Syntax.Formula.pp srk) phi;*)
-  let rules = ref [] in 
-  let rec get_rule vars phi = 
-      (*Format.printf "  Rule: %a@." (Syntax.Formula.pp srk) phi;*)
-      match Syntax.destruct srk phi with
-      | `Quantify (`Forall, nam, typ, expr) ->
-         get_rule ((nam,typ)::vars) expr
-      | `Or [nothyp; conc] ->
-         (match Syntax.destruct srk nothyp with 
-         | `Not (hyp) -> rules := (hyp,conc,List.rev vars)::(!rules)
-         | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk) phi;
-                failwith "Unrecognized rule format (No negated hypothesis)")
-      | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk) phi;
-             failwith "Unrecognized rule format (No top-level quantifier or disjunction)"
-      in
-  let rec split_rules phi = 
-      match Syntax.destruct srk phi with
-      | `And (parts) -> List.iter (get_rule []) parts
-      | _ -> get_rule [] phi in
-  split_rules phi;
-  List.iter (fun (hyp,conc,vars) ->
-      Format.printf "  Rule: @.";
-      Format.printf "    Vars: ["; 
-      List.iter (fun (nam,typ) -> Format.printf "%s," nam) vars;
-      Format.printf "]@.";
-      Format.printf "     Hyp: %a@." (Syntax.Formula.pp srk) hyp;
-      Format.printf "    Conc: %a@." (Syntax.Formula.pp srk) conc;
-      (* *)
-      let hyp_preds = find_predicates srk hyp in
-      Format.printf "  HPreds: ["; 
-      List.iter (fun p -> Format.printf "%a," 
-        (Syntax.pp_symbol srk) (Syntax.symbol_of_int p)) hyp_preds;
-      Format.printf "]@.";
-  ) !rules;
+  (*let rules = ref [] in 
+  Xlet rec get_rule vars phi = 
+  X    (*Format.printf "  Rule: %a@." (Syntax.Formula.pp srk) phi;*)
+  X    match Syntax.destruct srk phi with
+  X    | `Quantify (`Forall, nam, typ, expr) ->
+  X       get_rule ((nam,typ)::vars) expr
+  X    | `Or [nothyp; conc] ->
+  X       (match Syntax.destruct srk nothyp with 
+  X       | `Not (hyp) -> rules := (hyp,conc,List.rev vars)::(!rules)
+  X       | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk) phi;
+  X              failwith "Unrecognized rule format (No negated hypothesis)")
+  X    | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk) phi;
+  X           failwith "Unrecognized rule format (No top-level quantifier or disjunction)"
+  X    in
+  Xlet rec split_rules phi = 
+  X    match Syntax.destruct srk phi with
+  X    | `And (parts) -> List.iter (get_rule []) parts
+  X    | _ -> get_rule [] phi in
+  Xsplit_rules phi;
+  XList.iter (fun (hyp,conc,vars) ->
+  X    Format.printf "  Rule: @.";
+  X    Format.printf "    Vars: ["; 
+  X    List.iter (fun (nam,typ) -> Format.printf "%s," nam) vars;
+  X    Format.printf "]@.";
+  X    Format.printf "     Hyp: %a@." (Syntax.Formula.pp srk) hyp;
+  X    Format.printf "    Conc: %a@." (Syntax.Formula.pp srk) conc;
+  X    (* *)
+  X    let hyp_preds = find_predicates srk hyp in
+  X    Format.printf "  HPreds: ["; 
+  X    List.iter (fun p -> Format.printf "%a," 
+  X      (Syntax.pp_symbol srk) (Syntax.symbol_of_int p)) hyp_preds;
+  X    Format.printf "]@.";
+  X) !rules;
 
-  let callgraph = List.fold_left
-    (fun graph (hyp,conc,vars) ->
-      assert ((is_syntactic_false srk conc) ||
-              (is_syntactic_true srk conc) ||
-              (is_predicate srk conc));
-      if ((is_syntactic_false srk conc) ||
-          (is_syntactic_true srk conc)) then graph else
-      let conc_pred = id_of_predicate srk conc in
-      let hyp_preds = find_predicates srk hyp in
-      List.fold_left
-        (fun g p -> CallGraph.add_edge g conc_pred p)
-        graph
-        hyp_preds)
-    CallGraph.empty
-    !rules
-  in
-  let rulemap = List.fold_left
-    (fun rulemap (hyp,conc,vars) ->
-      if ((is_syntactic_false srk conc) ||
-          (is_syntactic_true srk conc)) then rulemap else
-      let conc_pred = id_of_predicate srk conc in
-      BatMap.Int.add
-        conc_pred
-        ((hyp,conc,vars)::(BatMap.Int.find_default [] conc_pred rulemap))
-        rulemap)
-    BatMap.Int.empty
-    !rules
-  in
-  Format.printf "SCC list in processing order:@.";
-  let callgraph_sccs = CallGraphSCCs.scc_list callgraph in
-  List.iter 
-    (fun scc ->
-      Format.printf "  SCC: [";
-      List.iter
-        (fun p -> 
-          Format.printf "%a,"
-          (Syntax.pp_symbol srk)
-          (Syntax.symbol_of_int p))
-        scc;
-      Format.printf "]@.")
-    callgraph_sccs;
-  List.iter
-    (fun scc ->
-      List.iter
-        (fun p ->
-          let p_rules = BatMap.Int.find_default [] p rulemap in
-          List.iter
-            (fun (hyp,conc,vars) ->
-              match Syntax.destruct srk conc with
-              | `App (func, args) ->
-                Format.printf "-Rule w/conc %a has args {" (Syntax.Formula.pp srk) conc;
-                List.iter
-                  (fun arg ->
-                    Format.printf "%a," (Syntax.Expr.pp srk) arg)
-                  args;
-                Format.printf "}@."
-              | _ -> failwith "Non-application in conclusion")
-            p_rules;
-          ())
-        scc)
-    callgraph_sccs;
+  Xlet callgraph = List.fold_left
+  X  (fun graph (hyp,conc,vars) ->
+  X    assert ((is_syntactic_false srk conc) ||
+  X            (is_syntactic_true srk conc) ||
+  X            (is_predicate srk conc));
+  X    if ((is_syntactic_false srk conc) ||
+  X        (is_syntactic_true srk conc)) then graph else
+  X    let conc_pred = id_of_predicate srk conc in
+  X    let hyp_preds = find_predicates srk hyp in
+  X    List.fold_left
+  X      (fun g p -> CallGraph.add_edge g conc_pred p)
+  X      graph
+  X      hyp_preds)
+  X  CallGraph.empty
+  X  !rules
+  Xin
+  Xlet rulemap = List.fold_left
+  X  (fun rulemap (hyp,conc,vars) ->
+  X    if ((is_syntactic_false srk conc) ||
+  X        (is_syntactic_true srk conc)) then rulemap else
+  X    let conc_pred = id_of_predicate srk conc in
+  X    BatMap.Int.add
+  X      conc_pred
+  X      ((hyp,conc,vars)::(BatMap.Int.find_default [] conc_pred rulemap))
+  X      rulemap)
+  X  BatMap.Int.empty
+  X  !rules
+  Xin
+  XFormat.printf "SCC list in processing order:@.";
+  Xlet callgraph_sccs = CallGraphSCCs.scc_list callgraph in
+  XList.iter 
+  X  (fun scc ->
+  X    Format.printf "  SCC: [";
+  X    List.iter
+  X      (fun p -> 
+  X        Format.printf "%a,"
+  X        (Syntax.pp_symbol srk)
+  X        (Syntax.symbol_of_int p))
+  X      scc;
+  X    Format.printf "]@.")
+  X  callgraph_sccs;
+  XList.iter
+  X  (fun scc ->
+  X    List.iter
+  X      (fun p ->
+  X        let p_rules = BatMap.Int.find_default [] p rulemap in
+  X        List.iter
+  X          (fun (hyp,conc,vars) ->
+  X            match Syntax.destruct srk conc with
+  X            | `App (func, args) ->
+  X              Format.printf "-Rule w/conc %a has args {" (Syntax.Formula.pp srk) conc;
+  X              List.iter
+  X                (fun arg ->
+  X                  Format.printf "%a," (Syntax.Expr.pp srk) arg)
+  X                args;
+  X              Format.printf "}@."
+  X            | _ -> failwith "Non-application in conclusion")
+  X          p_rules;
+  X        ())
+  X      scc)
+  X  callgraph_sccs;*)
   (*let multi = 
     List.fold_left 
       (fun running scc -> (running || ((List.length scc) > 1)))
