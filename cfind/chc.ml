@@ -29,14 +29,92 @@ end*)
 
 module CallGraphSCCs = Graph.Components.Make(CallGraph)
 
-(* Disturbs (simple-minded) format invariant of Horn clauses: *)
 module Sctx = Syntax.MakeSimplifyingContext ()
 
-(* Use this instead, so as to preserve the format invariant: *)
-module Ctx = Syntax.MakeContext ()
+module Pctx = Syntax.MakeContext ()
 
-let parsingCtx = Ctx.context
+let parsingCtx = Pctx.context
 let srk = Sctx.context
+
+(* Initially based on module Var as defined in   duet/cra.ml  *)
+module Var = struct
+  let sym_to_var = Hashtbl.create 991
+  let var_to_sym = Hashtbl.create 991
+
+  let typ var = `TyInt
+
+  let symbol_of var =
+    try Hashtbl.find var_to_sym var
+    with Not_found -> failwith "Failed lookup in Var.symbol_of"
+
+  let of_symbol sym =
+    if Hashtbl.mem sym_to_var sym then
+      Some (Hashtbl.find sym_to_var sym)
+    else
+      None
+
+  module I = struct
+    type t = int [@@deriving ord]
+    let pp formatter var =
+      let sym = symbol_of var in
+      Format.fprintf formatter "%a" (Syntax.pp_symbol srk) sym
+    let show = SrkUtil.mk_show pp
+    let equal x y = compare x y = 0
+    let hash var = Hashtbl.hash var
+  end
+  include I
+
+  let register_var sym = 
+    begin
+      (* sym_to_var and var_to_sym are always identity hash tables
+           over the subset of symbol numbers we're currently using *)
+      (*let sym = Syntax.mk_symbol srk ~name:(show var) (typ var) in*)
+      let var = Syntax.int_of_symbol sym in
+      Hashtbl.add var_to_sym var sym;
+      Hashtbl.add sym_to_var sym var
+    end
+
+  let reset_tables = 
+    begin
+      Hashtbl.clear var_to_sym;
+      Hashtbl.clear sym_to_var
+    end
+end
+
+module IterDomain = struct
+  open Iteration
+  open SolvablePolynomial
+  module SPOne = SumWedge (SolvablePolynomial) (SolvablePolynomialOne) ()
+  module SPPeriodicRational = SumWedge (SPOne) (SolvablePolynomialPeriodicRational) ()
+  module SPG = ProductWedge (SPPeriodicRational) (WedgeGuard)
+  module SPPRG = Sum (SPG) (PresburgerGuard) ()
+  module SPSplit = Sum (SPPRG) (Split(SPPRG)) ()
+  module VasSwitch = Sum (Vas)(Vass)()
+  module Vas_P = Product(VasSwitch)(Product(WedgeGuard)(LinearRecurrenceInequation))
+  module SpPlusSplitVas_P = Sum(SPSplit)(Vas_P)()
+  include SpPlusSplitVas_P
+end
+
+module MakeTransition (V : Transition.Var) = struct
+  include Transition.Make(Sctx)(V)
+
+  module I = Iter(Iteration.MakeDomain(IterDomain))
+
+  let star x = Log.time "cra:star" I.star x
+
+  let add x y =
+    if is_zero x then y
+    else if is_zero y then x
+    else add x y
+
+  let mul x y =
+    if is_zero x || is_zero y then zero
+    else if is_one x then y
+    else if is_one y then x
+    else mul x y
+end
+
+module K = MakeTransition(Var)
 
 let is_syntactic_false srk expr = 
   match Syntax.destruct srk expr with
@@ -47,6 +125,12 @@ let is_syntactic_true srk expr =
   match Syntax.destruct srk expr with
   | `Tru -> true
   | _ -> false
+
+let get_const srk term = 
+  match Syntax.Term.destruct srk term with
+  | `App (func, args) -> 
+    if ((List.length args) = 0) then Some func else None
+  | _ -> None
 
 let is_predicate srk expr = 
   match Syntax.destruct srk expr with
@@ -179,7 +263,224 @@ let print_linked_formula srk rule =
     Format.printf "%a } -> " (Syntax.Formula.pp srk) phi;
     print_pred_occ srk conc_pred;
     Format.printf "@."
-      
+
+let conc_pred_occ_of_linked_formula rule = 
+    let (conc_pred, hyp_preds, phi) = rule in
+    conc_pred
+
+let conc_pred_id_of_linked_formula rule = 
+    let (conc_pred, hyp_preds, phi) = rule in
+    let (pred_num, vars) = conc_pred in
+    pred_num
+
+let hyp_pred_ids_of_linked_formula rule = 
+    let (conc_pred, hyp_preds, phi) = rule in
+    List.map 
+      (fun pred_occ ->
+        let (pred_num, vars) = pred_occ in
+        pred_num)
+      hyp_preds
+
+let transition_of_linked_formula rule = 
+    let (conc_pred, hyp_preds, phi) = rule in
+    let (conc_pred_num, conc_vars) = conc_pred in
+    assert (List.length hyp_preds = 1);
+    let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
+    assert (hyp_pred_num = conc_pred_num);
+    Var.reset_tables;
+    List.iter (fun sym -> Var.register_var sym) hyp_vars;
+    (* conc_vars and hyp_vars are lists of symbols *)
+    let transform = 
+      List.map2 
+        (fun pre post -> 
+            ((* pre-state as variable *)
+             (match Var.of_symbol pre with
+             | Some v -> v
+             | _ -> failwith 
+                "Unregistered variable in transition_of_linked_formula"),
+            (* post-state as term *)
+            Syntax.mk_const srk post))
+        hyp_vars
+        conc_vars
+      in
+    K.construct phi transform
+
+let linked_formula_of_transition tr model_rule =
+  let post_shim = Memo.memo 
+      (fun sym -> Syntax.mk_symbol srk 
+       ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
+  let (tr_symbols, post_def) =
+    BatEnum.fold (fun (symbols, post_def) (var, term) ->
+        let pre_sym = Var.symbol_of var in
+        match get_const srk term with
+        | Some existing_post_sym ->
+          ((pre_sym,existing_post_sym)::symbols,post_def)
+        | None -> 
+          let new_post_sym = post_shim pre_sym in
+          let post_term = Syntax.mk_const srk new_post_sym in
+          ((pre_sym,new_post_sym)::symbols,(Syntax.mk_eq srk post_term term)::post_def)
+        )
+      ([], [])
+      (K.transform tr)
+  in
+  let body =
+    SrkSimplify.simplify_terms srk (Syntax.mk_and srk ((K.guard tr)::post_def))
+  in
+  let (conc_pred, hyp_preds, _) = model_rule in
+  let (conc_pred_num, _) = conc_pred in
+  assert (List.length hyp_preds = 1);
+  let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
+  assert (hyp_pred_num = conc_pred_num);
+  let new_args = 
+    List.map 
+      (fun hyp_var -> 
+         let rec go pairs = 
+           match pairs with
+           | (pre_sym, post_sym)::rest -> if hyp_var = pre_sym then post_sym else go rest
+           | [] -> failwith "Could not find symbol in linked_formula_of_transition"
+         in go tr_symbols)
+      hyp_vars in
+  let new_conc_pred = (conc_pred_num, new_args) in 
+  (new_conc_pred, hyp_preds, body)
+
+(** Given a formula phi and two predicate occurrences pred_occ1 and pred_occ2,
+ *    of the form pred_occ1(v_1,...,v_n)
+ *            and pred_occ2(w_1,...,w_n)
+ *    substitute each occurrence of w_i with v_i in phi *)
+let substitute_args_pred pred_occ1 pred_occ2 phi = 
+  let (pred_num1, vs) = pred_occ1 in
+  let (pred_num2, ws) = pred_occ2 in
+  assert (pred_num1 = pred_num2);
+  let sub sym = 
+    let rec go list1 list2 =
+      match (list1,list2) with
+      | (vi::vrest,wi::wrest) ->
+        if sym = vi
+        then Syntax.mk_const srk wi
+        else go vrest wrest
+      | ([],[]) -> Syntax.mk_const srk sym
+      | _ -> failwith "Unequal-length variable lists in substitute_args"
+      in go vs ws 
+    in
+  Syntax.substitute_const srk sub phi
+
+(** Replace all skolem constants appearing in rule 
+ *    with fresh skolem constants, except for those
+ *    appearing in the given list of predicate occurrences *)
+let fresh_skolem_except rule pred_occs =
+  let keep = 
+    List.fold_left 
+      (fun keep pred_occ ->
+        let (pred_num, vars) = pred_occ in
+        List.fold_left
+          (fun keep sym ->
+             BatSet.Int.add (Syntax.int_of_symbol sym) keep)
+          keep
+          vars)
+      BatSet.Int.empty
+      pred_occs in
+  let fresh_skolem =
+    Memo.memo 
+      (fun sym ->
+        let name = Syntax.show_symbol srk sym in
+        let typ = Syntax.typ_symbol srk sym in
+        Syntax.mk_symbol srk ~name typ) in
+  let map_symbol sym = 
+    if BatSet.Int.mem (Syntax.int_of_symbol sym) keep 
+    then sym 
+    else fresh_skolem sym in
+  let freshen_pred_occ pred_occ = 
+    let (pred_num, vars) = pred_occ in
+    let new_vars = List.map map_symbol vars in 
+    (pred_num, new_vars) in
+  let (conc_pred, hyp_preds, phi) = rule in
+  let new_conc_pred = freshen_pred_occ conc_pred in
+  let new_hyp_preds = List.map freshen_pred_occ hyp_preds in
+  let map_symbol_const sym = 
+    Syntax.mk_const srk (map_symbol sym) in
+  let new_phi = Syntax.substitute_const srk map_symbol_const phi in
+  (new_conc_pred, new_hyp_preds, new_phi)
+
+let substitute_args_rule rule1 rule2 = 
+  let (conc_pred1, hyp_preds1, phi1) = rule1 in
+  let (conc_pred2, hyp_preds2, phi2) = rule2 in
+  assert (conc_pred1 = conc_pred2);
+  let phi2 = substitute_args_pred conc_pred1 conc_pred2 phi2 in
+  (* Note: the following assumes that the two hypothesis predicate 
+       occurrence lists have the same order, which isn't strictly necessary *)
+  let rec go preds1 preds2 phi =
+    match (preds1,preds2) with
+    | (pred1::more_preds1,pred2::more_preds2) ->
+      let phi = substitute_args_pred pred1 pred2 phi in 
+      go more_preds1 more_preds2 phi
+    | ([],[]) -> phi
+    | _ -> failwith "Unequal-length predicate lists in disjoin_linked_formulas"
+    in
+  let phi2 = go hyp_preds1 hyp_preds2 phi2 in
+  (conc_pred1, hyp_preds1, phi2)
+
+let disjoin_linked_formulas rules =
+  match rules with
+  | [] -> failwith "Empty rule list in disjoin_linked_formulas"
+  | [rule1] -> rule1
+  | rule1::old_rules ->
+    let (conc_pred1, hyp_preds1, phi1) = rule1 in
+    let new_phis = 
+      List.map 
+        (fun old_rule -> 
+           let new_rule = substitute_args_rule rule1 old_rule in
+           let new_rule = fresh_skolem_except new_rule (conc_pred1::hyp_preds1) in
+           let (_,_, new_phi) = new_rule in
+           new_phi)
+        old_rules in
+    (conc_pred1, hyp_preds1, Syntax.mk_or srk (phi1::new_phis))
+
+let subst_all outer_rule inner_rule =
+  let (outer_conc, outer_hyps, outer_phi) = outer_rule in
+  let (inner_conc, inner_hyps, inner_phi) = inner_rule in
+  let (inner_conc_pred_num, _) = inner_conc in
+  let (outer_hyps_matching, outer_hyps_non_matching) = 
+    List.partition
+      (fun pred_occ ->
+        let (pred_num, vars) = pred_occ in
+        (pred_num = inner_conc_pred_num))
+      outer_hyps
+    in
+  let (new_hyps, new_phis) = 
+    List.fold_left
+      (fun (hyps,phis) outer_hyp -> 
+        let (outer_hyp_pred_num, outer_hyp_args) = outer_hyp in
+        assert (outer_hyp_pred_num = inner_conc_pred_num);
+        let new_phi = substitute_args_pred outer_hyp inner_conc inner_phi in
+        let new_rule = (outer_hyp, inner_hyps, new_phi) in
+        let (new_conc, subbed_hyps, new_phi) = 
+          fresh_skolem_except new_rule [outer_hyp] in  
+        (subbed_hyps @ hyps, new_phi::phis))
+      ([],[])
+      outer_hyps_matching
+    in
+  let phi = Syntax.mk_and srk (outer_phi::new_phis) in
+  let hyps = outer_hyps_non_matching @ new_hyps in
+  (outer_conc, hyps, phi)
+
+
+
+
+(*
+
+let of_transition_formula tr_symbols fmla = 
+    let transform =
+      List.fold_left (fun tr (pre, post) ->
+          match Var.of_symbol pre with
+          | Some v -> (v, Srk.Syntax.mk_const Cra.srk post)::tr
+          | None -> assert false)
+        []
+        tr_symbols
+    in
+    K.construct fmla transform
+
+ *)
+
   (*
   let alg = function
     | `And conjuncts -> List.concat conjuncts
@@ -252,6 +553,9 @@ let build_linked_formulas srk1 srk2 phi query_pred =
       (*allow*) (*get_rule [] [] phi*)
       (*forbid*) failwith "Currently forbidden: single-clause CHC program"
     in 
+  (* Filter out 'dummy rules' whose conclusion is 'true' *)
+  let rules = List.filter 
+    (fun (hyp,conc,vars) -> not (is_syntactic_true srk1 conc)) rules in 
   let rename_pred_internal sym = 
     let name = Syntax.show_symbol srk1 sym in
     Syntax.mk_symbol srk2 ~name:name `TyBool
@@ -402,7 +706,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
       | [conc_pred_occ] -> conc_pred_occ
       | [] -> 
         if (not (is_syntactic_false srk2 conc_sub))
-        then  failwith "Unrecognized rule format (Non-false non-predicate conclusion)"
+        then failwith "Unrecognized rule format (Non-false non-predicate conclusion)"
         else (query_pred, [])
       | _ -> failwith "Unrecognized rule format (Multiple conclusion predicate)"
     in 
@@ -428,6 +732,101 @@ let parse_smt2 filename =
 
   (*let phi = load_smtlib2 ~context:z3ctx srk str in*)
   (*Format.printf "Received formula: @.  %a @.@." (Syntax.Formula.pp srk) phi;*)
+  let callgraph = List.fold_left
+    (fun graph rule ->
+      let conc_pred_id = conc_pred_id_of_linked_formula rule in
+      let hyp_pred_ids = hyp_pred_ids_of_linked_formula rule in
+      List.fold_left
+        (fun g p -> CallGraph.add_edge g conc_pred_id p)
+        graph
+        hyp_pred_ids)
+    CallGraph.empty
+    rules
+  in
+  let rulemap = List.fold_left
+    (fun rulemap rule ->
+      let conc_pred_id = conc_pred_id_of_linked_formula rule in
+      BatMap.Int.add
+        conc_pred_id
+        (rule::(BatMap.Int.find_default [] conc_pred_id rulemap))
+        rulemap)
+    BatMap.Int.empty
+    rules
+  in
+  Format.printf "SCC list in processing order:@.";
+  let callgraph_sccs = CallGraphSCCs.scc_list callgraph in
+  List.iter 
+    (fun scc ->
+      Format.printf "  SCC: [";
+      List.iter
+        (fun p -> 
+          Format.printf "%a,"
+          (Syntax.pp_symbol srk)
+          (Syntax.symbol_of_int p))
+        scc;
+      Format.printf "]@.")
+    callgraph_sccs;
+  List.iter
+    (fun scc ->
+      List.iter
+        (fun p ->
+          let p_rules = BatMap.Int.find p rulemap in
+          let (rec_rules, nonrec_rules) = 
+              List.partition
+                (fun rule -> List.mem p (hyp_pred_ids_of_linked_formula rule))
+                p_rules in
+          List.iter
+            (fun rule ->
+              Format.printf "Rec rule:";
+              print_linked_formula srk rule;
+              Format.printf "@.";
+              let tr = transition_of_linked_formula rule in
+              Format.printf "  As transition:@.";
+              Format.printf "  %a@." K.pp tr;
+              let tr_star = K.star tr in 
+              Format.printf "  Starred:@.";
+              Format.printf "  %a@." K.pp tr_star;
+              let tr_star_rule = linked_formula_of_transition tr_star rule in
+              Format.printf "  Starred as rule:@.  ";
+              print_linked_formula srk tr_star_rule;
+              (*
+              disjoin_linked_formulas rules
+              subst_all outer_rule inner_rule
+              *)
+              ()
+              )
+            rec_rules;
+          List.iter
+            (fun rule ->
+              Format.printf "Non-rec rule:";
+              print_linked_formula srk rule;
+              Format.printf "@.")
+            nonrec_rules;
+          ())
+        scc)
+    callgraph_sccs;
+  (*
+  XList.iter
+  X  (fun scc ->
+  X    List.iter
+  X      (fun p ->
+  X        let p_rules = BatMap.Int.find_default [] p rulemap in
+  X        List.iter
+  X          (fun (hyp,conc,vars) ->
+  X            match Syntax.destruct srk conc with
+  X            | `App (func, args) ->
+  X              Format.printf "-Rule w/conc %a has args {" (Syntax.Formula.pp srk) conc;
+  X              List.iter
+  X                (fun arg ->
+  X                  Format.printf "%a," (Syntax.Expr.pp srk) arg)
+  X                args;
+  X              Format.printf "}@."
+  X            | _ -> failwith "Non-application in conclusion")
+  X          p_rules;
+  X        ())
+  X      scc)
+  X  callgraph_sccs;
+  *)
   (*let rules = ref [] in 
   Xlet rec get_rule vars phi = 
   X    (*Format.printf "  Rule: %a@." (Syntax.Formula.pp srk) phi;*)
@@ -461,68 +860,7 @@ let parse_smt2 filename =
   X      (Syntax.pp_symbol srk) (Syntax.symbol_of_int p)) hyp_preds;
   X    Format.printf "]@.";
   X) !rules;
-
-  Xlet callgraph = List.fold_left
-  X  (fun graph (hyp,conc,vars) ->
-  X    assert ((is_syntactic_false srk conc) ||
-  X            (is_syntactic_true srk conc) ||
-  X            (is_predicate srk conc));
-  X    if ((is_syntactic_false srk conc) ||
-  X        (is_syntactic_true srk conc)) then graph else
-  X    let conc_pred = id_of_predicate srk conc in
-  X    let hyp_preds = find_predicates srk hyp in
-  X    List.fold_left
-  X      (fun g p -> CallGraph.add_edge g conc_pred p)
-  X      graph
-  X      hyp_preds)
-  X  CallGraph.empty
-  X  !rules
-  Xin
-  Xlet rulemap = List.fold_left
-  X  (fun rulemap (hyp,conc,vars) ->
-  X    if ((is_syntactic_false srk conc) ||
-  X        (is_syntactic_true srk conc)) then rulemap else
-  X    let conc_pred = id_of_predicate srk conc in
-  X    BatMap.Int.add
-  X      conc_pred
-  X      ((hyp,conc,vars)::(BatMap.Int.find_default [] conc_pred rulemap))
-  X      rulemap)
-  X  BatMap.Int.empty
-  X  !rules
-  Xin
-  XFormat.printf "SCC list in processing order:@.";
-  Xlet callgraph_sccs = CallGraphSCCs.scc_list callgraph in
-  XList.iter 
-  X  (fun scc ->
-  X    Format.printf "  SCC: [";
-  X    List.iter
-  X      (fun p -> 
-  X        Format.printf "%a,"
-  X        (Syntax.pp_symbol srk)
-  X        (Syntax.symbol_of_int p))
-  X      scc;
-  X    Format.printf "]@.")
-  X  callgraph_sccs;
-  XList.iter
-  X  (fun scc ->
-  X    List.iter
-  X      (fun p ->
-  X        let p_rules = BatMap.Int.find_default [] p rulemap in
-  X        List.iter
-  X          (fun (hyp,conc,vars) ->
-  X            match Syntax.destruct srk conc with
-  X            | `App (func, args) ->
-  X              Format.printf "-Rule w/conc %a has args {" (Syntax.Formula.pp srk) conc;
-  X              List.iter
-  X                (fun arg ->
-  X                  Format.printf "%a," (Syntax.Expr.pp srk) arg)
-  X                args;
-  X              Format.printf "}@."
-  X            | _ -> failwith "Non-application in conclusion")
-  X          p_rules;
-  X        ())
-  X      scc)
-  X  callgraph_sccs;*)
+  *)
   (*let multi = 
     List.fold_left 
       (fun running scc -> (running || ((List.length scc) > 1)))
