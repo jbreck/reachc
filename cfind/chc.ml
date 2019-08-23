@@ -757,7 +757,7 @@ let parse_smt2 filename =
   let callgraph_sccs = CallGraphSCCs.scc_list callgraph in
   List.iter 
     (fun scc ->
-      Format.printf "  SCC: [";
+      Format.printf "SCC: [";
       List.iter
         (fun p -> 
           Format.printf "%a,"
@@ -770,38 +770,49 @@ let parse_smt2 filename =
     (fun scc ->
       List.iter
         (fun p ->
+          if p = query_int then () else
           let p_rules = BatMap.Int.find p rulemap in
           let (rec_rules, nonrec_rules) = 
               List.partition
                 (fun rule -> List.mem p (hyp_pred_ids_of_linked_formula rule))
                 p_rules in
+          Format.printf "  Rec rules: @.";
+          Format.printf "    Original rec rules: @.";
           List.iter
             (fun rule ->
-              Format.printf "Rec rule:";
+              Format.printf "      Rec rule: ";
               print_linked_formula srk rule;
-              Format.printf "@.";
-              let tr = transition_of_linked_formula rule in
-              Format.printf "  As transition:@.";
-              Format.printf "  %a@." K.pp tr;
-              let tr_star = K.star tr in 
-              Format.printf "  Starred:@.";
-              Format.printf "  %a@." K.pp tr_star;
-              let tr_star_rule = linked_formula_of_transition tr_star rule in
-              Format.printf "  Starred as rule:@.  ";
-              print_linked_formula srk tr_star_rule;
-              (*
-              disjoin_linked_formulas rules
-              subst_all outer_rule inner_rule
-              *)
-              ()
-              )
+              Format.printf "@.")
             rec_rules;
+          let combined_rec = disjoin_linked_formulas rec_rules in
+          Format.printf "    Combined rec rule: ";
+          print_linked_formula srk combined_rec;
+          Format.printf "@.";
+          let tr = transition_of_linked_formula combined_rec in
+          Format.printf "    As transition:@.";
+          Format.printf "    %a@." K.pp tr;
+          let tr_star = K.star tr in 
+          Format.printf "    Starred:@.";
+          Format.printf "    %a@." K.pp tr_star;
+          let tr_star_rule = linked_formula_of_transition tr_star combined_rec in
+          Format.printf "    Starred as rule:@.  ";
+          print_linked_formula srk tr_star_rule;
+          Format.printf "  Non-rec rules: @.";
+          Format.printf "    Original non-rec rules: @.";
           List.iter
             (fun rule ->
-              Format.printf "Non-rec rule:";
+              Format.printf "      Non-rec rule: ";
               print_linked_formula srk rule;
               Format.printf "@.")
             nonrec_rules;
+          let combined_nonrec = disjoin_linked_formulas nonrec_rules in
+          Format.printf "    Combined non-rec rule: ";
+          print_linked_formula srk combined_nonrec;
+          Format.printf "@.";
+          let summary = subst_all tr_star_rule combined_nonrec in
+          Format.printf "  Summary: ";
+          print_linked_formula srk summary;
+          Format.printf "@.";
           ())
         scc)
     callgraph_sccs;
