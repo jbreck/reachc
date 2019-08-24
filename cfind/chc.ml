@@ -54,7 +54,8 @@ module Var = struct
       None
 
   module I = struct
-    type t = int [@@deriving ord]
+    (*type t = int [@@deriving ord]*)
+    type t = Syntax.symbol [@@deriving ord]
     let pp formatter var =
       let sym = symbol_of var in
       Format.fprintf formatter "%a" (Syntax.pp_symbol srk) sym
@@ -69,7 +70,8 @@ module Var = struct
       (* sym_to_var and var_to_sym are always identity hash tables
            over the subset of symbol numbers we're currently using *)
       (*let sym = Syntax.mk_symbol srk ~name:(show var) (typ var) in*)
-      let var = Syntax.int_of_symbol sym in
+      (*let var = Syntax.int_of_symbol sym in*)
+      let var = sym in
       Hashtbl.add var_to_sym var sym;
       Hashtbl.add sym_to_var sym var
     end
@@ -250,7 +252,8 @@ let print_pred_occ srk pred_occ =
     Format.printf "%s(" (Syntax.show_symbol srk (Syntax.symbol_of_int pred_num));
     List.iteri 
       (fun i sym ->
-        Format.printf "%s" (Syntax.show_symbol srk sym);
+        (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
+        Format.printf "%a" (Syntax.pp_symbol srk) sym;
         if i != n_vars - 1 then Format.printf ",")
       var_symbols;
     Format.printf ")"
@@ -348,6 +351,12 @@ let linked_formula_of_transition tr model_rule =
  *            and pred_occ2(w_1,...,w_n)
  *    substitute each occurrence of w_i with v_i in phi *)
 let substitute_args_pred pred_occ1 pred_occ2 phi = 
+  (*Format.printf "  ~~ ~~  To-predicate:";
+  print_pred_occ srk pred_occ1;
+  Format.printf "@.";
+  Format.printf "  ~~ ~~From-predicate:";
+  print_pred_occ srk pred_occ2;
+  Format.printf "@.";*)
   let (pred_num1, vs) = pred_occ1 in
   let (pred_num2, ws) = pred_occ2 in
   assert (pred_num1 = pred_num2);
@@ -355,14 +364,17 @@ let substitute_args_pred pred_occ1 pred_occ2 phi =
     let rec go list1 list2 =
       match (list1,list2) with
       | (vi::vrest,wi::wrest) ->
-        if sym = vi
-        then Syntax.mk_const srk wi
+        if sym = wi
+        then Syntax.mk_const srk vi
         else go vrest wrest
       | ([],[]) -> Syntax.mk_const srk sym
       | _ -> failwith "Unequal-length variable lists in substitute_args"
-      in go vs ws 
+    in go vs ws 
     in
-  Syntax.substitute_const srk sub phi
+  let new_phi = Syntax.substitute_const srk sub phi in
+  (*Format.printf "  ~~ ~~Formula before: %a@." (Syntax.Formula.pp srk) phi;
+  Format.printf "  ~~ ~~Formula  after: %a@." (Syntax.Formula.pp srk) new_phi;*)
+  new_phi
 
 (** Replace all skolem constants appearing in rule 
  *    with fresh skolem constants, except for those
@@ -436,6 +448,9 @@ let disjoin_linked_formulas rules =
     (conc_pred1, hyp_preds1, Syntax.mk_or srk (phi1::new_phis))
 
 let subst_all outer_rule inner_rule =
+  (*Format.printf "  ~~Inner rule initially:@.    ";
+  print_linked_formula srk inner_rule;
+  Format.printf "@.";*)
   let (outer_conc, outer_hyps, outer_phi) = outer_rule in
   let (inner_conc, inner_hyps, inner_phi) = inner_rule in
   let (inner_conc_pred_num, _) = inner_conc in
@@ -449,10 +464,14 @@ let subst_all outer_rule inner_rule =
   let (new_hyps, new_phis) = 
     List.fold_left
       (fun (hyps,phis) outer_hyp -> 
+        (*Format.printf "  ~~Substituting for one outer hypothesis...@.";*)
         let (outer_hyp_pred_num, outer_hyp_args) = outer_hyp in
         assert (outer_hyp_pred_num = inner_conc_pred_num);
         let new_phi = substitute_args_pred outer_hyp inner_conc inner_phi in
         let new_rule = (outer_hyp, inner_hyps, new_phi) in
+        (*Format.printf "  ~~Rule after substitute_args_pred and before fresh_skolem:@.    ";
+        print_linked_formula srk new_rule;
+        Format.printf "@.";*)
         let (new_conc, subbed_hyps, new_phi) = 
           fresh_skolem_except new_rule [outer_hyp] in  
         (subbed_hyps @ hyps, new_phi::phis))
@@ -525,6 +544,8 @@ let load_smtlib2 ?(context=Z3.mk_context []) srk str =
   | `Formula phi -> phi
   | `Term _ -> invalid_arg "load_smtlib2"
 *)
+
+
 
 (** 
  * 1. Replace int variable occurrences with constants
@@ -768,6 +789,7 @@ let parse_smt2 filename =
     callgraph_sccs;
   List.iter
     (fun scc ->
+      if (List.length scc) > 1 then failwith "Mutual SCC not yet implemented" else
       List.iter
         (fun p ->
           if p = query_int then () else
