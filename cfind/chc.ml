@@ -471,6 +471,9 @@ let subst_all outer_rule inner_rule =
         (pred_num = inner_conc_pred_num))
       outer_hyps
     in
+  (if List.length outer_hyps_matching = 0 
+  then failwith "Mismatched subst_all call"
+  else ());
   let (new_hyps, new_phis) = 
     List.fold_left
       (fun (hyps,phis) outer_hyp -> 
@@ -770,6 +773,11 @@ let get_matrix_element matrix rowid colid =
 let has_matrix_element matrix rowid colid =
   IntPairMap.mem (rowid, colid) !matrix
 
+let get_matrix_element_opt matrix rowid colid =
+  if has_matrix_element matrix rowid colid 
+  then Some (get_matrix_element matrix rowid colid)
+  else None;;
+
 let remove_matrix_element matrix rowid colid =
   matrix := (IntPairMap.remove (rowid, colid) !matrix)
 
@@ -778,6 +786,13 @@ let matrix_row_iteri matrix rowid func =
     (fun (rowid',colid') value ->
       if rowid' != rowid then () else
       func rowid colid' value)
+    !matrix;;
+
+let matrix_col_iteri matrix colid func = 
+  IntPairMap.iter 
+    (fun (rowid',colid') value ->
+      if colid' != colid then () else
+      func rowid' colid value)
     !matrix;;
 
 let parse_smt2 filename =  
@@ -833,7 +848,11 @@ let parse_smt2 filename =
     callgraph_sccs;
   let summaries = ref BatMap.Int.empty in
   List.iter
-    (fun scc ->
+    begin
+    fun scc ->
+      let const_id = (List.hd (List.sort compare scc)) - 1 in
+      assert (not (List.mem const_id scc));
+      (*let summary_list_vector = ref BatMap.Int.empty in *)
       (*if (List.length scc) > 1 then failwith "Mutual SCC not yet implemented" else*)
       let rule_list_matrix = new_empty_matrix () in
       List.iter
@@ -862,54 +881,99 @@ let parse_smt2 filename =
                | [hyp] ->
                  let (hyp_pred_num, args) = hyp in
                  modify_def_matrix_element 
-                    rule_list_matrix p hyp_pred_num [] (fun lis -> rule::lis)
+                    rule_list_matrix p hyp_pred_num [] (fun rs -> rule::rs)
+               | [] ->
+                 modify_def_matrix_element 
+                    rule_list_matrix p const_id [] (fun rs -> rule::rs)
+                 (*let rs = BatMap.Int.find_default [] p !summary_list_vector in
+                 summary_list_vector := BatMap.Int.add p (rule::rs) !summary_list_vector*)
                | _ -> failwith "Non-superlinear CHC systems are not yet suppored")
             p_rules) 
         scc;
       (* Disjoin rules in each matrix entry *)
+      (*let summary_vector = ref BatMap.Int.empty in
+      List.iter
+        (fun p ->
+          if BatMap.Int.mem p !summary_list_vector then
+            let rs = BatMap.Int.find p !summary_list_vector in
+            let combined_rule = disjoin_linked_formulas rs in
+            summary_vector := BatMap.Int.add p combined_rule !summary_vector
+        ) scc;*)
       let rule_matrix = new_empty_matrix () in
       List.iter
         (fun p ->
-          matrix_row_iteri 
-            rule_list_matrix 
+          matrix_row_iteri
+            rule_list_matrix
             p
             (fun _ colid rules ->
-              let combined_rules = disjoin_linked_formulas rules in
-              assign_matrix_element rule_matrix p colid combined_rules)
+              let combined_rule = disjoin_linked_formulas rules in
+              assign_matrix_element rule_matrix p colid combined_rule)
           ) scc;
       (* Use query predicate here? *)
-      (* Now, eliminate predicates from this SCC one at a time*)
-      List.iter
-        (fun p ->
-          if p = query_int then () else
-          begin
-            if has_matrix_element rule_matrix p p then
-              let combined_rec = get_matrix_element rule_matrix p p in
-              Format.printf "  Combined recursive rule: ";
-              print_linked_formula srk combined_rec;
-              Format.printf "@.";
-              let tr = transition_of_linked_formula combined_rec in
-              Format.printf "    As transition:@.";
-              Format.printf "    %a@." K.pp tr;
-              let tr_star = K.star tr in 
-              Format.printf "    Starred:@.";
-              Format.printf "    %a@." K.pp tr_star;
-              let tr_star_rule = linked_formula_of_transition tr_star combined_rec in
-              Format.printf "    Starred as rule:@.  ";
-              print_linked_formula srk tr_star_rule;
-              (* *)
-              matrix_row_iteri rule_matrix p
-                (fun _ hyp nonrec_rule ->
-                  (* *)
-                  let sub_rule = subst_all tr_star_rule nonrec_rule in
-                  assign_matrix_element rule_matrix p hyp sub_rule);
-              remove_matrix_element rule_matrix p p
-          end;
-          List.iter
-            (fun q -> ()
-            ) scc;
-          ())
-        scc)
+      match scc with
+      | [p] when p = query_int ->
+        (match get_matrix_element_opt rule_matrix query_int const_id with
+          | None -> failwith "Missing final CHC"
+          | Some final_rule -> 
+            let (conc, hyps, final_phi) = final_rule in
+            (match Wedge.is_sat srk final_phi with
+            | `Sat -> Format.printf "UNKNOWN (final constraint is sat)@."
+            | `Unsat -> Format.printf "SAT (final constraint is unsat)@."
+            | `Unknown -> Format.printf "UNKNOWN (final constraint unknown)@."))
+      | _ -> 
+      begin
+        (* Now, eliminate predicates from this SCC one at a time*)
+        List.iter
+          (fun p ->
+            if p = query_int then () else
+            begin
+              if has_matrix_element rule_matrix p p then
+                let combined_rec = get_matrix_element rule_matrix p p in
+                Format.printf "  Combined recursive rule: ";
+                print_linked_formula srk combined_rec;
+                Format.printf "@.";
+                let tr = transition_of_linked_formula combined_rec in
+                Format.printf "    As transition:@.";
+                Format.printf "    %a@." K.pp tr;
+                let tr_star = K.star tr in 
+                Format.printf "    Starred:@.";
+                Format.printf "    %a@." K.pp tr_star;
+                let tr_star_rule = 
+                  linked_formula_of_transition tr_star combined_rec in
+                Format.printf "    Starred as rule:@.  ";
+                print_linked_formula srk tr_star_rule;
+                (* *)
+                matrix_row_iteri rule_matrix p
+                  (fun _ hyp nonrec_rule ->
+                    (* *)
+                    let sub_rule = subst_all tr_star_rule nonrec_rule in
+                    assign_matrix_element rule_matrix p hyp sub_rule);
+                remove_matrix_element rule_matrix p p
+            end;
+            matrix_col_iteri rule_matrix p 
+              (fun q _ qrule ->
+                (* qrule has hypothesis p and conclusion q *)
+                matrix_row_iteri rule_matrix p
+                  (fun _ r prule ->
+                    assert (r != p);
+                    (* prule has hypothesis r and conclusion p *)
+                    let sub_rule = subst_all qrule prule in
+                    match get_matrix_element_opt rule_matrix q r with
+                    | None ->
+                      assign_matrix_element rule_matrix q r sub_rule
+                    | Some prev_rule ->
+                      let combined_rule = 
+                        disjoin_linked_formulas [prev_rule; sub_rule] in
+                      assign_matrix_element rule_matrix q r combined_rule))
+          ) scc;
+        List.iter
+          (fun p ->
+            match get_matrix_element_opt rule_matrix p const_id with
+            | None -> failwith "Missing const_id entry in rule_matrix"
+            | Some rule -> summaries := (BatMap.Int.add p rule !summaries)
+          ) scc
+      end
+    end
     callgraph_sccs;
   (*
   XList.iter
