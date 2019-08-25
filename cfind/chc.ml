@@ -426,7 +426,9 @@ let fresh_skolem_except rule pred_occs =
 let substitute_args_rule rule1 rule2 = 
   let (conc_pred1, hyp_preds1, phi1) = rule1 in
   let (conc_pred2, hyp_preds2, phi2) = rule2 in
-  assert (conc_pred1 = conc_pred2);
+  let (conc_pred_num1, _) = conc_pred1 in
+  let (conc_pred_num2, _) = conc_pred2 in
+  assert (conc_pred_num1 = conc_pred_num2);
   let phi2 = substitute_args_pred conc_pred1 conc_pred2 phi2 in
   (* Note: the following assumes that the two hypothesis predicate 
        occurrence lists have the same order, which isn't strictly necessary *)
@@ -833,8 +835,8 @@ let parse_smt2 filename =
     BatMap.Int.empty
     rules
   in
-  Format.printf "SCC list in processing order:@.";
   let callgraph_sccs = CallGraphSCCs.scc_list callgraph in
+  (*Format.printf "SCC list in processing order:@.";
   List.iter 
     (fun scc ->
       Format.printf "SCC: [";
@@ -845,16 +847,26 @@ let parse_smt2 filename =
           (Syntax.symbol_of_int p))
         scc;
       Format.printf "]@.")
-    callgraph_sccs;
+    callgraph_sccs;*)
   let summaries = ref BatMap.Int.empty in
+  let finished = ref false in
   List.iter
+    (fun scc -> if !finished then () else 
     begin
-    fun scc ->
+      (Format.printf "SCC: [";
+      List.iter
+        (fun p -> 
+          Format.printf "%a,"
+          (Syntax.pp_symbol srk)
+          (Syntax.symbol_of_int p))
+        scc;
+      Format.printf "]@.");
       let const_id = (List.hd (List.sort compare scc)) - 1 in
       assert (not (List.mem const_id scc));
       (*let summary_list_vector = ref BatMap.Int.empty in *)
       (*if (List.length scc) > 1 then failwith "Mutual SCC not yet implemented" else*)
       let rule_list_matrix = new_empty_matrix () in
+      Format.printf "  Finding rules@.";
       List.iter
         (fun p ->
           let p_rules = BatMap.Int.find p rulemap in
@@ -900,12 +912,20 @@ let parse_smt2 filename =
             summary_vector := BatMap.Int.add p combined_rule !summary_vector
         ) scc;*)
       let rule_matrix = new_empty_matrix () in
+      Format.printf "  Disjoining rules@.";
       List.iter
         (fun p ->
           matrix_row_iteri
             rule_list_matrix
             p
             (fun _ colid rules ->
+              (*Format.printf "    rowid:%d colid:%d@." p colid;
+              List.iter
+                (fun r ->
+                Format.printf "    - One rule to disjoin: ";
+                print_linked_formula srk r;
+                Format.printf "@.")
+              rules;*)
               let combined_rule = disjoin_linked_formulas rules in
               assign_matrix_element rule_matrix p colid combined_rule)
           ) scc;
@@ -915,6 +935,10 @@ let parse_smt2 filename =
         (match get_matrix_element_opt rule_matrix query_int const_id with
           | None -> failwith "Missing final CHC"
           | Some final_rule -> 
+            finished := true;
+            Format.printf "Final CHC:";
+            print_linked_formula srk final_rule;
+            Format.printf "@.";
             let (conc, hyps, final_phi) = final_rule in
             (match Wedge.is_sat srk final_phi with
             | `Sat -> Format.printf "UNKNOWN (final constraint is sat)@."
@@ -923,10 +947,14 @@ let parse_smt2 filename =
       | _ -> 
       begin
         (* Now, eliminate predicates from this SCC one at a time*)
+        (Format.printf "  Eliminating predicates@.");
         List.iter
           (fun p ->
             if p = query_int then () else
             begin
+              (Format.printf "    - Eliminating %a@." 
+                (Syntax.pp_symbol srk) 
+                (Syntax.symbol_of_int p));
               if has_matrix_element rule_matrix p p then
                 let combined_rec = get_matrix_element rule_matrix p p in
                 Format.printf "  Combined recursive rule: ";
@@ -973,7 +1001,7 @@ let parse_smt2 filename =
             | Some rule -> summaries := (BatMap.Int.add p rule !summaries)
           ) scc
       end
-    end
+    end)
     callgraph_sccs;
   (*
   XList.iter
