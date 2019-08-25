@@ -6,6 +6,16 @@ module CallGraph = Graph.Persistent.Digraph.ConcreteBidirectional(SrkUtil.Int)
 module CallSet = BatSet.Make((*IntPair*)SrkUtil.Int)
 module VertexSet = SrkUtil.Int.Set
 
+
+module IntPair = struct
+  type t = int * int [@@deriving ord]
+  let equal (x,y) (x',y') = (x=x' && y=y')
+  let hash = Hashtbl.hash
+end
+module IntPairMap = BatMap.Make(IntPair)
+module IntPairSet = BatSet.Make(IntPair)
+
+
 (*module CallGraph = struct
   type t = CallSet.t M.t
   module V = (*IntPair*) SrkUtil.Int
@@ -736,6 +746,40 @@ let build_linked_formulas srk1 srk2 phi query_pred =
   in
   List.map linked_formula_of_rule rules
 
+(*
+let add_entry_to_matrix matrix rowid colid value = 
+  (if not (BatMap.Int.mem rowid !matrix) then
+    BatMap.Int.add !matrix rowid (BatMap.Int.empty));
+  let row = BatMap.Int.find rowid !matrix in
+  let row = BatMap.Int.add colid value row in
+  matrix := BatMap.
+*)
+
+let new_empty_matrix () = ref IntPairMap.empty
+
+let assign_matrix_element matrix rowid colid value = 
+  matrix := IntPairMap.add (rowid, colid) value !matrix;;
+
+let modify_def_matrix_element matrix rowid colid defaultvalue func = 
+  matrix := IntPairMap.modify_def 
+    defaultvalue (rowid, colid) func !matrix;;
+
+let get_matrix_element matrix rowid colid =
+  IntPairMap.find (rowid, colid) !matrix;;
+
+let has_matrix_element matrix rowid colid =
+  IntPairMap.mem (rowid, colid) !matrix
+
+let remove_matrix_element matrix rowid colid =
+  matrix := (IntPairMap.remove (rowid, colid) !matrix)
+
+let matrix_row_iteri matrix rowid func = 
+  IntPairMap.iter 
+    (fun (rowid',colid') value ->
+      if rowid' != rowid then () else
+      func rowid colid' value)
+    !matrix;;
+
 let parse_smt2 filename =  
   (* FIXME let Z3 read the whole file... *)
   let chan = open_in filename in
@@ -787,54 +831,83 @@ let parse_smt2 filename =
         scc;
       Format.printf "]@.")
     callgraph_sccs;
+  let summaries = ref BatMap.Int.empty in
   List.iter
     (fun scc ->
-      if (List.length scc) > 1 then failwith "Mutual SCC not yet implemented" else
+      (*if (List.length scc) > 1 then failwith "Mutual SCC not yet implemented" else*)
+      let rule_list_matrix = new_empty_matrix () in
+      List.iter
+        (fun p ->
+          let p_rules = BatMap.Int.find p rulemap in
+          (* Substitute summaries of lower SCCs into this predicate's rules *)
+          let p_rules = 
+            List.map
+              (fun rule ->
+               let (conc, hyps, phi) = rule in
+               List.fold_left 
+                 (fun rule_inprog hyp -> 
+                    let (pred_num, args) = hyp in
+                    if BatMap.Int.mem pred_num !summaries then
+                      let pred_summary = BatMap.Int.find pred_num !summaries in
+                      subst_all rule_inprog pred_summary
+                    else 
+                      rule_inprog)
+                 rule
+                 hyps)
+            p_rules in 
+          List.iter 
+            (fun rule ->
+               let (conc, hyps, phi) = rule in
+               match hyps with
+               | [hyp] ->
+                 let (hyp_pred_num, args) = hyp in
+                 modify_def_matrix_element 
+                    rule_list_matrix p hyp_pred_num [] (fun lis -> rule::lis)
+               | _ -> failwith "Non-superlinear CHC systems are not yet suppored")
+            p_rules) 
+        scc;
+      (* Disjoin rules in each matrix entry *)
+      let rule_matrix = new_empty_matrix () in
+      List.iter
+        (fun p ->
+          matrix_row_iteri 
+            rule_list_matrix 
+            p
+            (fun _ colid rules ->
+              let combined_rules = disjoin_linked_formulas rules in
+              assign_matrix_element rule_matrix p colid combined_rules)
+          ) scc;
+      (* Use query predicate here? *)
+      (* Now, eliminate predicates from this SCC one at a time*)
       List.iter
         (fun p ->
           if p = query_int then () else
-          let p_rules = BatMap.Int.find p rulemap in
-          let (rec_rules, nonrec_rules) = 
-              List.partition
-                (fun rule -> List.mem p (hyp_pred_ids_of_linked_formula rule))
-                p_rules in
-          Format.printf "  Rec rules: @.";
-          Format.printf "    Original rec rules: @.";
+          begin
+            if has_matrix_element rule_matrix p p then
+              let combined_rec = get_matrix_element rule_matrix p p in
+              Format.printf "  Combined recursive rule: ";
+              print_linked_formula srk combined_rec;
+              Format.printf "@.";
+              let tr = transition_of_linked_formula combined_rec in
+              Format.printf "    As transition:@.";
+              Format.printf "    %a@." K.pp tr;
+              let tr_star = K.star tr in 
+              Format.printf "    Starred:@.";
+              Format.printf "    %a@." K.pp tr_star;
+              let tr_star_rule = linked_formula_of_transition tr_star combined_rec in
+              Format.printf "    Starred as rule:@.  ";
+              print_linked_formula srk tr_star_rule;
+              (* *)
+              matrix_row_iteri rule_matrix p
+                (fun _ hyp nonrec_rule ->
+                  (* *)
+                  let sub_rule = subst_all tr_star_rule nonrec_rule in
+                  assign_matrix_element rule_matrix p hyp sub_rule);
+              remove_matrix_element rule_matrix p p
+          end;
           List.iter
-            (fun rule ->
-              Format.printf "      Rec rule: ";
-              print_linked_formula srk rule;
-              Format.printf "@.")
-            rec_rules;
-          let combined_rec = disjoin_linked_formulas rec_rules in
-          Format.printf "    Combined rec rule: ";
-          print_linked_formula srk combined_rec;
-          Format.printf "@.";
-          let tr = transition_of_linked_formula combined_rec in
-          Format.printf "    As transition:@.";
-          Format.printf "    %a@." K.pp tr;
-          let tr_star = K.star tr in 
-          Format.printf "    Starred:@.";
-          Format.printf "    %a@." K.pp tr_star;
-          let tr_star_rule = linked_formula_of_transition tr_star combined_rec in
-          Format.printf "    Starred as rule:@.  ";
-          print_linked_formula srk tr_star_rule;
-          Format.printf "  Non-rec rules: @.";
-          Format.printf "    Original non-rec rules: @.";
-          List.iter
-            (fun rule ->
-              Format.printf "      Non-rec rule: ";
-              print_linked_formula srk rule;
-              Format.printf "@.")
-            nonrec_rules;
-          let combined_nonrec = disjoin_linked_formulas nonrec_rules in
-          Format.printf "    Combined non-rec rule: ";
-          print_linked_formula srk combined_nonrec;
-          Format.printf "@.";
-          let summary = subst_all tr_star_rule combined_nonrec in
-          Format.printf "  Summary: ";
-          print_linked_formula srk summary;
-          Format.printf "@.";
+            (fun q -> ()
+            ) scc;
           ())
         scc)
     callgraph_sccs;
@@ -942,5 +1015,50 @@ let parse_smt2 filename =
 
 
 
-
-
+(* **************************************************** *)
+(*
+      List.iter
+        (fun p ->
+          if p = query_int then () else
+          let (rec_rules, nonrec_rules) = 
+              List.partition
+                (fun rule -> List.mem p (hyp_pred_ids_of_linked_formula rule))
+                p_rules in
+          Format.printf "  Rec rules: @.";
+          Format.printf "    Original rec rules: @.";
+          List.iter
+            (fun rule ->
+              Format.printf "      Rec rule: ";
+              print_linked_formula srk rule;
+              Format.printf "@.")
+            rec_rules;
+          let combined_rec = disjoin_linked_formulas rec_rules in
+          Format.printf "    Combined rec rule: ";
+          print_linked_formula srk combined_rec;
+          Format.printf "@.";
+          let tr = transition_of_linked_formula combined_rec in
+          Format.printf "    As transition:@.";
+          Format.printf "    %a@." K.pp tr;
+          let tr_star = K.star tr in 
+          Format.printf "    Starred:@.";
+          Format.printf "    %a@." K.pp tr_star;
+          let tr_star_rule = linked_formula_of_transition tr_star combined_rec in
+          Format.printf "    Starred as rule:@.  ";
+          print_linked_formula srk tr_star_rule;
+          Format.printf "  Non-rec rules: @.";
+          Format.printf "    Original non-rec rules: @.";
+          List.iter
+            (fun rule ->
+              Format.printf "      Non-rec rule: ";
+              print_linked_formula srk rule;
+              Format.printf "@.")
+            nonrec_rules;
+          let combined_nonrec = disjoin_linked_formulas nonrec_rules in
+          Format.printf "    Combined non-rec rule: ";
+          print_linked_formula srk combined_nonrec;
+          Format.printf "@.";
+          let summary = subst_all tr_star_rule combined_nonrec in
+          Format.printf "  Summary: ";
+          print_linked_formula srk summary;
+          Format.printf "@.";
+*)
