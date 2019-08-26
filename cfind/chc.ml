@@ -627,9 +627,12 @@ let build_linked_formulas srk1 srk2 phi query_pred =
               (fun arg ->
                 match Syntax.destruct srk1 arg with
                 | `Var (v, `TyInt) -> var_to_skolem v
-                (*| `Var (v, `TyBool) -> var_to_skolem v*)
+                (*| `Var (v, `TyBool) -> 
+                failwith "Unrecognized rule format (Got bool predicate argument)"*)
+                | `Var (v, `TyReal) -> 
+                failwith "Unrecognized rule format (Got real predicate argument)"
                 (* What about (e.g.) reals here? *)
-                | _ -> failwith "Unrecognized rule format (Got real predicate argument)")
+                | _ -> failwith "Unrecognized rule format (Got unrecognized predicate argument)")
               args)
             in
           let pred_occ = (fnumber, argsymbols) in
@@ -941,9 +944,9 @@ let parse_smt2 filename =
             Format.printf "@.";
             let (conc, hyps, final_phi) = final_rule in
             (match Wedge.is_sat srk final_phi with
-            | `Sat -> Format.printf "UNKNOWN (final constraint is sat)@."
-            | `Unsat -> Format.printf "SAT (final constraint is unsat)@."
-            | `Unknown -> Format.printf "UNKNOWN (final constraint unknown)@."))
+            | `Sat -> Format.printf "RESULT: UNKNOWN (final constraint is sat)@."
+            | `Unsat -> Format.printf "RESULT: SAT (final constraint is unsat)@."
+            | `Unknown -> Format.printf "RESULT: UNKNOWN (final constraint unknown)@."))
       | _ -> 
       begin
         (* Now, eliminate predicates from this SCC one at a time*)
