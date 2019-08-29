@@ -89,6 +89,9 @@ let rec eval alg ast =
       | (OP_IFF, [phi;psi]) ->
         alg (`Or [alg (`And [phi; psi]);
                   alg (`Not (alg (`Or [phi; psi])))])
+      | (OP_XOR, [phi;psi]) ->
+        alg (`Or [alg (`And [phi; alg (`Not psi)]);
+                  alg (`And [alg (`Not phi); psi])])
       | (OP_NOT, [phi]) -> alg (`Not phi)
       | (OP_EQ, [s; t]) -> alg (`Atom (`Eq, s, t))
       | (OP_LE, [s; t]) -> alg (`Atom (`Leq, s, t))
