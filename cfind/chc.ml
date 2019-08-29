@@ -609,93 +609,151 @@ let build_linked_formulas srk1 srk2 phi query_pred =
       begin
         match Syntax.Formula.destruct srk1 expr with
         (* Non-recursive nodes *)
-        | `Tru -> (Syntax.mk_true srk2, [])
-        | `Fls -> (Syntax.mk_false srk2, [])
+        | `Tru -> (Syntax.mk_true srk2, [], [])
+        | `Fls -> (Syntax.mk_false srk2, [], [])
         | `Proposition (`Var var) ->
           (* The boolean quantified variable var is being asserted. *)
           (* We replace v with an integer variable w and assert w == 1. *)
           let sym = var_to_skolem var in 
           (Syntax.mk_eq srk2 
             (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.one), 
-          [])
+          [], [])
         | `Proposition (`App (f, args)) ->
           (* A horn-clause-predicate occurrence *)
           let fsym = rename_pred f in 
           let fnumber = Syntax.int_of_symbol fsym in
-          let argsymbols = 
-            (List.map
-              (fun arg ->
-                match Syntax.destruct srk1 arg with
-                | `Var (v, `TyInt) -> var_to_skolem v
-                (*| `Var (v, `TyBool) -> 
-                failwith "Unrecognized rule format (Got bool predicate argument)"*)
-                | `Var (v, `TyReal) -> 
-                failwith "Unrecognized rule format (Got real predicate argument)"
-                (* What about (e.g.) reals here? *)
-                | _ -> failwith "Unrecognized rule format (Got unrecognized predicate argument)")
-              args)
+          let rec accum_arg_info (arglist: (('a, 'b) Syntax.expr) list) symbollist predlist eqlist = 
+            match arglist with
+            | [] -> (symbollist, predlist, eqlist)
+            | orig_arg::more_args ->
+              begin
+                match Syntax.Expr.refine srk1 orig_arg with
+                | `Term arg ->
+                begin
+                  match Syntax.destruct srk1 arg with
+                  | `Var (v, `TyInt) -> 
+                    accum_arg_info 
+                      more_args ((var_to_skolem v)::symbollist) predlist eqlist 
+                  (*| `Var (v, `TyBool) -> 
+                    accum_arg_info 
+                      more_args ((var_to_skolem v)::symbollist) predlist eqlist*)
+                  | `Var (v, `TyReal) ->
+                    failwith "Unrecognized rule format (Got real predicate argument)"
+                  | _ -> 
+                  let (term, tpreds, teqs) = go_term arg in
+                  let termsymbol = Syntax.mk_symbol srk2 ~name:"TermSymbol" `TyInt in
+                  let termeq = Syntax.mk_eq srk2 (Syntax.mk_const srk2 termsymbol) term in
+                  accum_arg_info 
+                    more_args (termsymbol::symbollist) (tpreds @ predlist) (termeq::(teqs @ eqlist)) 
+                  (*| _ -> failwith "Unrecognized rule format (Got unrecognized predicate argument)")*)
+                end
+                | `Formula arg ->
+                begin
+                  let (subformula, fpreds, feqs) = go_formula arg in
+                  let formulasymbol = Syntax.mk_symbol srk2 ~name:"FormulaSymbol" `TyInt in
+                  let formulatrue = 
+                    (Syntax.mk_eq srk2 
+                      (Syntax.mk_const srk2 formulasymbol) 
+                      (Syntax.mk_real srk2 (QQ.one))) in
+                  let notf f = Syntax.mk_not srk2 f in
+                  let formulaiff = 
+                      Syntax.mk_or srk2 
+                        [Syntax.mk_and srk2 [     formulatrue;     subformula]; 
+                         Syntax.mk_and srk2 [notf formulatrue;notf subformula]]
+                  in
+                  accum_arg_info 
+                    more_args (formulasymbol::symbollist) (fpreds @ predlist) (formulaiff::(feqs @ eqlist))
+                  (*| _ -> failwith "Unrecognized rule format (Got unrecognized predicate argument)")*)
+                end
+              end
             in
+          let (argsymbols, predlist, eqlist) = accum_arg_info args [] [] [] in
           let pred_occ = (fnumber, argsymbols) in
-          (Syntax.mk_true srk2, [pred_occ])
+          (Syntax.mk_true srk2, pred_occ::predlist, eqlist)
         (* Recursive nodes: bool from something *)
-        (*| `Ite (cond, bthen, belse) ->
-          let (cond_f, cond_p) = go_formula cond in
-          let (bthen_f, bthen_p) = go_term bthen in 
-          let (belse_f, belse_p) = go_term belse in 
-          (Syntax.mk_ite srk2 cond_f bthen_f belse_f,
-           cond_p @ bthen_p @ belse_p)*)
+        | `Ite (cond, bthen, belse) ->
+        let (cond_f, cond_p, cond_eq) = go_formula cond in
+        let (bthen_f, bthen_p, bthen_eq) = go_formula bthen in 
+        let (belse_f, belse_p, belse_eq) = go_formula belse in 
+        (Syntax.mk_ite srk2 cond_f bthen_f belse_f,
+         cond_p  @ bthen_p  @ belse_p,
+         cond_eq @ bthen_eq @ belse_eq)
+        (*| `Ite _ ->
+          begin
+            match Syntax.Expr.refine srk1 expr with
+            | `Term ite_term ->
+              begin
+              match Syntax.Term.destruct srk1 ite_term with
+                | `Ite (cond, bthen, belse) ->
+                let (cond_f, cond_p, cond_eq) = go_formula cond in
+                let (bthen_f, bthen_p, bthen_eq) = go_term bthen in 
+                let (belse_f, belse_p, belse_eq) = go_term belse in 
+                (Syntax.mk_ite srk2 cond_f bthen_f belse_f,
+                 cond_p  @ bthen_p  @ belse_p,
+                 cond_eq @ bthen_eq @ belse_eq)
+                | _ -> failwith "Unrecognized rule forma (Got unrecognized ITE format 1)"
+              end
+            | _ -> failwith "Unrecognized rule forma (Got unrecognized ITE format 2)"
+          end*)
         (* Recursive nodes: bool from bool *)
         | `And exprs -> 
-          let (subexprs, preds) = combine_formulas exprs in  
-          (Syntax.mk_and srk2 subexprs, preds) 
+          let (subexprs, preds, eqs) = combine_formulas exprs in  
+          (Syntax.mk_and srk2 subexprs, preds, eqs) 
         | `Or exprs ->
-          let (subexprs, preds) = combine_formulas exprs in  
-          (Syntax.mk_or srk2 subexprs, preds) 
+          let (subexprs, preds, eqs) = combine_formulas exprs in  
+          (Syntax.mk_or srk2 subexprs, preds, eqs) 
         | `Not p ->
-          let (subexpr, preds) = go_formula p in
-          (Syntax.mk_not srk2 subexpr, preds)
+          let (subexpr, preds, eqs) = go_formula p in
+          (Syntax.mk_not srk2 subexpr, preds, eqs)
         (* Recursive nodes: bool from int *)
         | `Atom (op, s, t) -> 
-          let ((s_sub,t_sub),preds) = combine_two_terms s t in
+          let ((s_sub,t_sub),preds, eqs) = combine_two_terms s t in
           (match op with
-          | `Eq ->  (Syntax.mk_eq srk2 s_sub t_sub, preds) 
-          | `Leq -> (Syntax.mk_leq srk2 s_sub t_sub, preds) 
-          | `Lt ->  (Syntax.mk_lt srk2 s_sub t_sub, preds))
+          | `Eq ->  (Syntax.mk_eq srk2 s_sub t_sub, preds, eqs) 
+          | `Leq -> (Syntax.mk_leq srk2 s_sub t_sub, preds, eqs) 
+          | `Lt ->  (Syntax.mk_lt srk2 s_sub t_sub, preds, eqs))
         (* Format-violating nodes: *)
         | `Quantify (_,_,_,_) -> 
           Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) expr;
           failwith "Unrecognized rule format (Got quantifier in rule)"
-        | _ -> (* includes ITE at the moment *)
+        (*| _ -> (* includes ITE at the moment *)
           Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) expr;
-          failwith "Unrecognized rule format (Got unrecognized node in expr)"
+          failwith "Unrecognized rule format (Got unrecognized node in expr)"*)
       end
     and go_term term = 
       begin
         match Syntax.Term.destruct srk1 term with
         (* Non-recursive nodes *)
-        | `Real qq -> (Syntax.mk_real srk2 qq, [])
+        | `Real qq -> (Syntax.mk_real srk2 qq, [], [])
         | `Var (var, `TyInt) -> 
           let sym = var_to_skolem var in 
-          (Syntax.mk_const srk2 sym, [])
+          (Syntax.mk_const srk2 sym, [], [])
         (* Recursive nodes: int from int *)
         | `Add terms ->
-          let (subexprs, preds) = combine_terms terms in  
-          (Syntax.mk_add srk2 subexprs, preds) 
+          let (subexprs, preds, eqs) = combine_terms terms in  
+          (Syntax.mk_add srk2 subexprs, preds, eqs)
         | `Mul terms ->
-          let (subexprs, preds) = combine_terms terms in  
-          (Syntax.mk_mul srk2 subexprs, preds) 
+          let (subexprs, preds, eqs) = combine_terms terms in  
+          (Syntax.mk_mul srk2 subexprs, preds, eqs)
         | `Binop (`Div, s, t) ->
-          let ((s_sub,t_sub),preds) = combine_two_terms s t in
-          (Syntax.mk_div srk2 s_sub t_sub, preds)
+          let ((s_sub,t_sub),preds, eqs) = combine_two_terms s t in
+          (Syntax.mk_div srk2 s_sub t_sub, preds, eqs)
         | `Binop (`Mod, s, t) ->
-          let ((s_sub,t_sub),preds) = combine_two_terms s t in
-          (Syntax.mk_mod srk2 s_sub t_sub, preds)
+          let ((s_sub,t_sub),preds, eqs) = combine_two_terms s t in
+          (Syntax.mk_mod srk2 s_sub t_sub, preds, eqs)
         | `Unop (`Floor, t) ->
-          let (subexpr, preds) = go_term t in
-          (Syntax.mk_floor srk2 subexpr, preds)
+          let (subexpr, preds, eqs) = go_term t in
+          (Syntax.mk_floor srk2 subexpr, preds, eqs)
         | `Unop (`Neg, t) ->
-          let (subexpr, preds) = go_term t in
-          (Syntax.mk_neg srk2 subexpr, preds)
+          let (subexpr, preds, eqs) = go_term t in
+          (Syntax.mk_neg srk2 subexpr, preds, eqs)
+        | `Ite (cond, bthen, belse) ->
+        let (cond_f, cond_p, cond_eq) = go_formula cond in
+        let (bthen_f, bthen_p, bthen_eq) = go_term bthen in 
+        let (belse_f, belse_p, belse_eq) = go_term belse in 
+        (Syntax.mk_ite srk2 cond_f bthen_f belse_f,
+         cond_p  @ bthen_p  @ belse_p,
+         cond_eq @ bthen_eq @ belse_eq)
         (* Format-violating nodes: *)
         | `Var (v, `TyReal) ->
           Format.printf "  Bad Rule: %a@." (Syntax.Term.pp srk1) term;
@@ -703,44 +761,37 @@ let build_linked_formulas srk1 srk2 phi query_pred =
         | `App (func, args) -> 
           Format.printf "  Bad Rule: %a@." (Syntax.Term.pp srk1) term;
           failwith "Unrecognized rule format (Got function application)"
-        | _ -> 
+        (*| _ -> 
           Format.printf "  Bad Rule: %a@." (Syntax.Term.pp srk1) term;
-          failwith "Unrecognized rule format (Got unrecognized node in term)"
-        
+          failwith "Unrecognized rule format (Got unrecognized node in term)"*)
       end
     and combine_formulas exprs = 
       begin
         List.fold_left
-          (fun (subexprs,preds) ex -> 
-              let ex_s, ex_p = go_formula ex in 
-              ((ex_s::subexprs),(ex_p @ preds)))
-          ([],[])
+          (fun (subexprs, preds, eqs) ex -> 
+              let ex_s, ex_p, ex_e = go_formula ex in 
+              ((ex_s::subexprs), (ex_p @ preds), (ex_e @ eqs)))
+          ([],[],[])
           exprs
       end
-    (*and combine_two_formulas s t = 
-      begin
-        let (s_sub,s_p) = go_formula s in
-        let (t_sub,t_p) = go_formula t in 
-        ((s_sub,t_sub),s_p @ t_p)
-      end*)
     and combine_terms exprs = 
       begin 
         List.fold_left
-          (fun (subexprs,preds) ex -> 
-              let ex_s, ex_p = go_term ex in 
-              ((ex_s::subexprs),(ex_p @ preds)))
-          ([],[])
+          (fun (subexprs, preds, eqs) ex -> 
+              let ex_s, ex_p, ex_e = go_term ex in 
+              ((ex_s::subexprs), (ex_p @ preds), (ex_e @ eqs)))
+          ([],[],[])
           exprs
       end
     and combine_two_terms s t = 
       begin
-        let (s_sub,s_p) = go_term s in
-        let (t_sub,t_p) = go_term t in 
-        ((s_sub,t_sub),s_p @ t_p)
+        let (s_sub,s_p,s_e) = go_term s in
+        let (t_sub,t_p,t_e) = go_term t in 
+        ((s_sub,t_sub), (s_p @ t_p), (s_e @ t_e))
       end
       in
-    let (hyp_sub,hyp_preds) = go_formula hyp in
-    let (conc_sub,conc_preds) = go_formula conc in
+    let (hyp_sub,hyp_preds,hyp_eqs) = go_formula hyp in
+    let (conc_sub,conc_preds,conc_eqs) = go_formula conc in
     let conc_pred_occ = match conc_preds with
       | [conc_pred_occ] -> conc_pred_occ
       | [] -> 
@@ -749,7 +800,12 @@ let build_linked_formulas srk1 srk2 phi query_pred =
         else (query_pred, [])
       | _ -> failwith "Unrecognized rule format (Multiple conclusion predicate)"
     in 
-    (conc_pred_occ, hyp_preds, hyp_sub)
+    let eqs = hyp_eqs @ conc_eqs in
+    let phi = 
+      if (List.length eqs) > 0
+      then Syntax.mk_and srk2 (hyp_sub::eqs)
+      else hyp_sub in
+    (conc_pred_occ, hyp_preds, phi)
     (* *)
   in
   List.map linked_formula_of_rule rules
