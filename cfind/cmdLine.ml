@@ -201,6 +201,3 @@ let parse filename =
   in
   go (!parsers)
 
-let _ = 
-  register_parser ("smt2", Chc.parse_smt2)
-

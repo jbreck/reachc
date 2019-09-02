@@ -1171,13 +1171,39 @@ let parse_smt2 filename =
 
   *)
 
-  ()
+  ();;
   (*CfgIr.iter_defs (fun def -> Def.set_max_id def.did) file;
   file*)
 
+let _ = 
+  CmdLine.register_parser ("smt2", parse_smt2);;
 
-
-
+let _ =
+  CmdLine.register_config
+    ("-cra-split-loops",
+     Arg.Clear IterDomain.SPSplit.abstract_left,
+     " Turn on loop splitting");
+  CmdLine.register_config
+    ("-cra-no-matrix",
+     Arg.Clear IterDomain.SPOne.abstract_left,
+     " Turn off matrix recurrences");
+  CmdLine.register_config
+    ("-cra-prsd",
+     Arg.Clear IterDomain.SPPeriodicRational.abstract_left,
+     " Use periodic rational spectral decomposition");
+  CmdLine.register_config
+    ("-cra-prsd-pg",
+     Arg.Clear IterDomain.SPPRG.abstract_left,
+     " Use periodic rational spectral decomposition w/ Presburger guard");
+  CmdLine.register_config
+    ("-cra-vas",
+     Arg.Clear IterDomain.SpPlusSplitVas_P.abstract_left,
+     " Use VAS abstraction");
+  CmdLine.register_config
+    ("-cra-vass",
+     Arg.Unit (fun () -> IterDomain.VasSwitch.abstract_left := false; IterDomain.SpPlusSplitVas_P.abstract_left := false),
+     " Use VASS abstraction");
+  ()
 
 
 
