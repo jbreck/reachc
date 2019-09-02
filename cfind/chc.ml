@@ -270,12 +270,12 @@ let print_pred_occ srk pred_occ =
 
 let print_linked_formula srk rule = 
     let (conc_pred, hyp_preds, phi) = rule in
-    Format.printf "{ ";
-    List.iter (fun pred -> print_pred_occ srk pred; Format.printf "; ")
+    Format.printf "{ @[";
+    List.iter (fun pred -> print_pred_occ srk pred; Format.printf ";@ ")
       hyp_preds;
-    Format.printf "%a } -> " (Syntax.Formula.pp srk) phi;
+    Format.printf "%a@ -> " (Syntax.Formula.pp srk) phi;
     print_pred_occ srk conc_pred;
-    Format.printf "@."
+    Format.printf "@] }@."
 
 let conc_pred_occ_of_linked_formula rule = 
     let (conc_pred, hyp_preds, phi) = rule in
@@ -497,8 +497,14 @@ let subst_all outer_rule inner_rule =
   let hyps = outer_hyps_non_matching @ new_hyps in
   (outer_conc, hyps, phi)
 
-
-
+let linked_formula_has_hyp rule target_hyp_num = 
+  let (conc, hyps, phi) = rule in
+  List.fold_left 
+    (fun running hyp -> 
+       let (pred_num, args) = hyp in
+       (running || (pred_num = target_hyp_num)))
+    false
+    hyps;;
 
 (*
 
@@ -869,8 +875,11 @@ let parse_smt2 filename =
   (*let query_pred = Syntax.mk_app parsingCtx query_sym [] in*)
   let query_int = Syntax.int_of_symbol query_sym in  
   let rules = build_linked_formulas parsingCtx srk phi query_int in 
-  let _ = List.iter (fun rule -> print_linked_formula srk rule) rules in 
-
+  let _ = List.iter 
+    (fun rule -> 
+        Format.printf "Incoming CHC: @.  ";
+        print_linked_formula srk rule) 
+    rules in 
   (*let phi = load_smtlib2 ~context:z3ctx srk str in*)
   (*Format.printf "Received formula: @.  %a @.@." (Syntax.Formula.pp srk) phi;*)
   let callgraph = List.fold_left
@@ -939,7 +948,9 @@ let parse_smt2 filename =
                     let (pred_num, args) = hyp in
                     if BatMap.Int.mem pred_num !summaries then
                       let pred_summary = BatMap.Int.find pred_num !summaries in
-                      subst_all rule_inprog pred_summary
+                      (if linked_formula_has_hyp rule_inprog pred_num then
+                        subst_all rule_inprog pred_summary
+                      else rule_inprog)
                     else 
                       rule_inprog)
                  rule
@@ -971,7 +982,7 @@ let parse_smt2 filename =
             summary_vector := BatMap.Int.add p combined_rule !summary_vector
         ) scc;*)
       let rule_matrix = new_empty_matrix () in
-      Format.printf "  Disjoining rules@.";
+      Format.printf "  Disjoining CHCs@.";
       List.iter
         (fun p ->
           matrix_row_iteri
@@ -995,7 +1006,7 @@ let parse_smt2 filename =
           | None -> failwith "Missing final CHC"
           | Some final_rule -> 
             finished := true;
-            Format.printf "Final CHC:";
+            Format.printf "Final CHC: @.  ";
             print_linked_formula srk final_rule;
             Format.printf "@.";
             let (conc, hyps, final_phi) = final_rule in
@@ -1016,7 +1027,7 @@ let parse_smt2 filename =
                 (Syntax.symbol_of_int p));
               if has_matrix_element rule_matrix p p then
                 let combined_rec = get_matrix_element rule_matrix p p in
-                Format.printf "  Combined recursive rule: ";
+                Format.printf "  Combined recursive CHC: ";
                 print_linked_formula srk combined_rec;
                 Format.printf "@.";
                 let tr = transition_of_linked_formula combined_rec in
@@ -1027,7 +1038,7 @@ let parse_smt2 filename =
                 Format.printf "    %a@." K.pp tr_star;
                 let tr_star_rule = 
                   linked_formula_of_transition tr_star combined_rec in
-                Format.printf "    Starred as rule:@.  ";
+                Format.printf "    Starred as CHC:@.  ";
                 print_linked_formula srk tr_star_rule;
                 (* *)
                 matrix_row_iteri rule_matrix p
@@ -1163,6 +1174,11 @@ let parse_smt2 filename =
   ()
   (*CfgIr.iter_defs (fun def -> Def.set_max_id def.did) file;
   file*)
+
+
+
+
+
 
 
 
