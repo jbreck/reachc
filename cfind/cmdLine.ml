@@ -162,7 +162,6 @@ let parse filename =
   in
   go (!parsers)
 
-
 let _ =
   register_pass
     ("-split-atomic",
@@ -184,11 +183,56 @@ let _ =
 
 (*let spec_list () = (!pass_args) @ (!config_args) @ (!debug_args)*)
 
-let spec_list () = []
+let pass_args : (key * spec * doc) list ref = ref []
 
-let parsers : (string * (string -> unit)) list ref = ref []
-let register_parser p = parsers := p::!parsers
-let parse filename =
+let passes : (string -> unit) list ref = ref []
+
+let run file = List.iter (fun f -> f file) (List.rev (!passes))
+
+(*let register_pass (name, pass, doc) =
+  let a = (name, Arg.Unit (fun () -> passes := pass::(!passes)), doc) in
+  pass_args := a::!pass_args*)
+
+let register_main_pass pass = 
+  passes := pass::(!passes)
+
+let verbosity_arg =
+  ("-verbosity",
+   Arg.String (fun v -> Log.verbosity_level := (Log.level_of_string v)),
+   " Set verbosity level (higher = more verbose; defaults to 0)")
+
+let verbose_arg =
+  ("-verbose",
+   Arg.String (fun v -> Log.set_verbosity_level v `info),
+   " Raise verbosity for a particular module")
+
+let verbose_list_arg =
+  ("-verbose-list",
+   Arg.Unit (fun () ->
+       print_endline "Available modules for setting verbosity:";
+       Hashtbl.iter (fun k _ ->
+           print_endline (" - " ^ k);
+         ) Log.loggers;
+       exit 0;
+     ),
+   " List modules which can be used with -verbose")
+
+let config_args = ref [verbosity_arg; verbose_arg; verbose_list_arg ] 
+let register_config a = config_args := a::!config_args
+
+(*let spec_list () = []*)
+let spec_list () = !config_args
+(*let spec_list () = (!pass_args) @ (!config_args) @ (!debug_args)*)
+
+let main_filename : string option ref = ref None
+
+let set_filename filename = 
+    main_filename := Some filename
+
+(*let parsers : (string * (string -> unit)) list ref = ref []
+let register_parser p = parsers := p::!parsers*)
+
+(*let parse filename =
   let rec go = function
     | ((suffix, parse)::tl) ->
       if Filename.check_suffix filename suffix then begin
@@ -199,5 +243,6 @@ let parse filename =
     | [] -> 
       failwith "Unrecognized file extension"
   in
-  go (!parsers)
+  go (!parsers)*)
+
 
