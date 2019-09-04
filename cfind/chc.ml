@@ -503,7 +503,31 @@ let transition_of_linked_formula rule =
       in
     K.construct phi transform
 
+(* Make a rule that corresponds to the identity transition, 
+   on the model of the given model_rule.
+   The returned rule will have the same predicate occurrences
+   as model_rule.  *)
+let identity_linked_formula model_rule =
+  let (conc_pred, hyp_preds, _) = model_rule in
+  let (conc_pred_num, conc_vars) = conc_pred in
+  assert (List.length hyp_preds = 1);
+  let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
+  assert (hyp_pred_num = conc_pred_num);
+  let eq_atoms = List.fold_left2
+    (fun atoms hyp_var conc_var ->
+        let atom = Syntax.mk_eq srk 
+          (Syntax.mk_const srk hyp_var) 
+          (Syntax.mk_const srk conc_var) 
+        in atom::atoms)
+    [] 
+    hyp_vars
+    conc_vars
+  in
+  let phi = Syntax.mk_and srk eq_atoms in
+  (conc_pred, hyp_preds, phi)
+
 let linked_formula_of_transition tr model_rule =
+  if K.is_one tr then identity_linked_formula model_rule else
   let post_shim = Memo.memo 
       (fun sym -> Syntax.mk_symbol srk 
        ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
@@ -524,6 +548,14 @@ let linked_formula_of_transition tr model_rule =
   let body =
     SrkSimplify.simplify_terms srk (Syntax.mk_and srk ((K.guard tr)::post_def))
   in
+  (* Now, body is a formula over the pre-state and post-state variable pairs
+     found in tr_symbols.  I assume that the pre-state variables haven't changed,
+     but the post-state variables may have changed.  Because the post-state 
+     variables may have changed, I will look up each of the variables in the
+     predicate-occurrence in the hypothesis of the model rule and find the
+     (new?) post-state variable that it corresponds to, and then I'll put that 
+     variable into the predicate-occurrence in the conclusion of the rule that
+     I return.  *)
   let (conc_pred, hyp_preds, _) = model_rule in
   let (conc_pred_num, _) = conc_pred in
   assert (List.length hyp_preds = 1);
@@ -534,8 +566,10 @@ let linked_formula_of_transition tr model_rule =
       (fun hyp_var -> 
          let rec go pairs = 
            match pairs with
-           | (pre_sym, post_sym)::rest -> if hyp_var = pre_sym then post_sym else go rest
-           | [] -> failwith "Could not find symbol in linked_formula_of_transition"
+           | (pre_sym, post_sym)::rest -> 
+                   if hyp_var = pre_sym then post_sym else go rest
+           | [] -> Format.printf "  ERROR: missing symbol %a@." (Syntax.pp_symbol srk) hyp_var;
+                   failwith "Could not find symbol in linked_formula_of_transition"
          in go tr_symbols)
       hyp_vars in
   let new_conc_pred = (conc_pred_num, new_args) in 
@@ -1218,14 +1252,13 @@ let parse_smt2 filename =
           (fun p ->
             if p = query_int then () else
             begin
-              (Format.printf "    - Eliminating %a@." 
+              (Format.printf "   -Eliminating %a@." 
                 (Syntax.pp_symbol srk) 
                 (Syntax.symbol_of_int p));
               if has_matrix_element rule_matrix p p then
                 let combined_rec = get_matrix_element rule_matrix p p in
-                Format.printf "  Combined recursive CHC: ";
+                Format.printf "    Combined recursive CHC:@.    ";
                 print_linked_formula srk combined_rec;
-                Format.printf "@.";
                 let tr = transition_of_linked_formula combined_rec in
                 Format.printf "    As transition:@.";
                 Format.printf "    %a@." K.pp tr;
