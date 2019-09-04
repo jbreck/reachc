@@ -1,5 +1,5 @@
 module Log = Srk.Log
-include Srk.Log.Make(struct let name = "cra" end)
+include Srk.Log.Make(struct let name = "cfind" end)
 open Srk
 
 let cra_refine_flag = ref false
@@ -358,26 +358,35 @@ type 'a linked_formula = predicate_occurrence *
                          (predicate_occurrence list) *
                          'a Srk.Syntax.Formula.t
 
-let print_pred_occ srk pred_occ = 
-    let (pred_num, var_symbols) = pred_occ in 
-    let n_vars = List.length var_symbols in 
-    Format.printf "%s(" (Syntax.show_symbol srk (Syntax.symbol_of_int pred_num));
-    List.iteri 
-      (fun i sym ->
-        (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
-        Format.printf "%a" (Syntax.pp_symbol srk) sym;
-        if i != n_vars - 1 then Format.printf ",")
-      var_symbols;
-    Format.printf ")"
+let logf_noendl ?(level=`info) =
+  let sf = Format.std_formatter in 
+  if (Log.level_leq (!Log.verbosity_level) level ||
+      Log.level_leq (!my_verbosity_level) level)
+  then Format.fprintf sf
+  else Format.ifprintf sf
 
-let print_linked_formula srk rule = 
-    let (conc_pred, hyp_preds, phi) = rule in
-    Format.printf "{ @[";
-    List.iter (fun pred -> print_pred_occ srk pred; Format.printf ";@ ")
-      hyp_preds;
-    Format.printf "%a@ -> " (Syntax.Formula.pp srk) phi;
-    print_pred_occ srk conc_pred;
-    Format.printf "@] }@."
+let print_pred_occ ?(level=`info) srk pred_occ = 
+  let (pred_num, var_symbols) = pred_occ in 
+  let n_vars = List.length var_symbols in 
+  logf_noendl ~level "%s(" 
+    (Syntax.show_symbol srk (Syntax.symbol_of_int pred_num));
+  List.iteri 
+    (fun i sym ->
+      (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
+      logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;
+      if i != n_vars - 1 then logf_noendl ~level ",")
+    var_symbols;
+  logf_noendl ~level ")"
+
+let print_linked_formula ?(level=`info) srk rule = 
+  let (conc_pred, hyp_preds, phi) = rule in
+  logf_noendl ~level "{ @[";
+  List.iter 
+    (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
+    hyp_preds;
+  logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) phi;
+  print_pred_occ srk conc_pred;
+  logf_noendl ~level "@] }@."
 
 let conc_pred_occ_of_linked_formula rule = 
     let (conc_pred, hyp_preds, phi) = rule in
@@ -485,7 +494,7 @@ let linked_formula_of_transition tr model_rule =
            match pairs with
            | (pre_sym, post_sym)::rest -> 
                    if hyp_var = pre_sym then post_sym else go rest
-           | [] -> Format.printf "  ERROR: missing symbol %a@." (Syntax.pp_symbol srk) hyp_var;
+           | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
                    failwith "Could not find symbol in linked_formula_of_transition"
          in go tr_symbols)
       hyp_vars in
@@ -654,9 +663,9 @@ let build_linked_formulas srk1 srk2 phi query_pred =
     | `Or [nothyp; conc] ->
        (match Syntax.destruct srk1 nothyp with 
        | `Not (hyp) -> (hyp,conc,vars)::rules (* reverse? *)
-       | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) phi;
+       | _ -> logf ~level:`fatal "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
               failwith "Unrecognized rule format (No negated hypothesis)")
-    | _ -> Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) phi;
+    | _ -> logf ~level:`fatal "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
            failwith "Unrecognized rule format (No top-level quantifier or disjunction)"
     in
   let rules = 
@@ -795,10 +804,10 @@ let build_linked_formulas srk1 srk2 phi query_pred =
           | `Lt ->  (Syntax.mk_lt srk2 s_sub t_sub, preds, eqs))
         (* Format-violating nodes: *)
         | `Quantify (_,_,_,_) -> 
-          Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) expr;
+          logf ~level:`fatal "  Bad Rule: %a" (Syntax.Formula.pp srk1) expr;
           failwith "Unrecognized rule format (Got quantifier in rule)"
         (*| _ -> (* includes ITE at the moment *)
-          Format.printf "  Bad Rule: %a@." (Syntax.Formula.pp srk1) expr;
+          logf ~level:`fatal "  Bad Rule: %a" (Syntax.Formula.pp srk1) expr;
           failwith "Unrecognized rule format (Got unrecognized node in expr)"*)
       end
     and go_term term = 
@@ -837,13 +846,13 @@ let build_linked_formulas srk1 srk2 phi query_pred =
          cond_eq @ bthen_eq @ belse_eq)
         (* Format-violating nodes: *)
         | `Var (v, `TyReal) ->
-          Format.printf "  Bad Rule: %a@." (Syntax.Term.pp srk1) term;
+          logf ~level:`fatal "  Bad Rule: %a" (Syntax.Term.pp srk1) term;
           failwith "Unrecognized rule format (Got real-valued variable)"
         | `App (func, args) -> 
-          Format.printf "  Bad Rule: %a@." (Syntax.Term.pp srk1) term;
+          logf ~level:`fatal "  Bad Rule: %a" (Syntax.Term.pp srk1) term;
           failwith "Unrecognized rule format (Got function application)"
         (*| _ -> 
-          Format.printf "  Bad Rule: %a@." (Syntax.Term.pp srk1) term;
+          logf ~level:`fatal "  Bad Rule: %a" (Syntax.Term.pp srk1) term;
           failwith "Unrecognized rule format (Got unrecognized node in term)"*)
       end
     and combine_formulas exprs = 
@@ -928,23 +937,23 @@ let matrix_col_iteri matrix colid func =
       func rowid' colid value)
     !matrix;;
 
-let print_scc scc = 
-  Format.printf "SCC: [";
+let print_scc ?(level=`info) scc = 
+  logf_noendl ~level "SCC: [";
   List.iter
     (fun p -> 
-      Format.printf "%a,"
+      logf_noendl ~level "%a,"
       (Syntax.pp_symbol srk)
       (Syntax.symbol_of_int p))
     scc;
-  Format.printf "]@."
+  logf_noendl ~level "]@."
 
-let print_condensed_graph callgraph_sccs = 
-  Format.printf "SCC list in processing order:@.";
+let print_condensed_graph ?(level=`info) callgraph_sccs = 
+  logf ~level "SCC list in processing order:";
   List.iter print_scc callgraph_sccs
 
 let build_rule_list_matrix scc rulemap summaries const_id = 
   let rule_list_matrix = new_empty_matrix () in
-  Format.printf "  Finding rules@.";
+  logf ~level:`info "  Finding rules";
   List.iter
     (fun p ->
       let p_rules = BatMap.Int.find p rulemap in
@@ -991,7 +1000,7 @@ let build_rule_matrix scc rulemap summaries const_id =
   let rule_list_matrix = 
     build_rule_list_matrix scc rulemap summaries const_id in
   let rule_matrix = new_empty_matrix () in
-  Format.printf "  Disjoining CHCs@.";
+  logf ~level:`info "  Disjoining CHCs";
   List.iter
     (fun p ->
       matrix_row_iteri
@@ -1014,31 +1023,31 @@ let analyze_query_predicate rule_matrix query_int const_id =
   match get_matrix_element_opt rule_matrix query_int const_id with
   | None -> failwith "Missing final CHC"
   | Some final_rule -> 
-    Format.printf "Final CHC: @.  ";
-    print_linked_formula srk final_rule;
-    Format.printf "@.";
+    logf_noendl ~level:`info "Final CHC: @.  ";
+    print_linked_formula ~level:`info srk final_rule;
+    logf ~level:`info "";
     let (conc, hyps, final_phi) = final_rule in
     begin
       match Wedge.is_sat srk final_phi with
-      | `Sat -> Format.printf "RESULT: UNKNOWN (final constraint is sat)@."
-      | `Unsat -> Format.printf "RESULT: SAT (final constraint is unsat)@."
+      | `Sat -> logf ~level:`always "RESULT: UNKNOWN (final constraint is sat)"
+      | `Unsat -> logf ~level:`always "RESULT: SAT (final constraint is unsat)"
       | `Unknown -> 
         if not !retry_flag then 
-          Format.printf "RESULT: UNKNOWN (final constraint unknown)@."
+          logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
         else
         begin
-          Format.printf "Preliminary: unknown (final constraint unknown)@.";
-          Format.printf "Retrying...@.";
+          logf ~level:`info "Preliminary: unknown (final constraint unknown)";
+          logf ~level:`info "Retrying...";
           let wedge = Wedge.abstract srk final_phi in
           if Wedge.is_bottom wedge
-          then Format.printf "RESULT: SAT (final constraint is unsat)@."
-          else Format.printf "RESULT: UNKNOWN (final constraint unknown)@."
+          then logf ~level:`always "RESULT: SAT (final constraint is unsat)"
+          else logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
         end
     end
 
 let eliminate_predicate rule_matrix query_int const_id p =
   (*if p = query_int then () else*)
-  Format.printf "   -Eliminating %a@." 
+  logf ~level:`info "   -Eliminating %a" 
     (Syntax.pp_symbol srk) 
     (Syntax.symbol_of_int p);
   (* First, eliminate p's direct recursion if it exists *)
@@ -1046,17 +1055,17 @@ let eliminate_predicate rule_matrix query_int const_id p =
     if has_matrix_element rule_matrix p p then
       (* Obtain the direct-recursion entry from the matrix *)
       let combined_rec = get_matrix_element rule_matrix p p in
-      Format.printf "    Combined recursive CHC:@.    ";
-      print_linked_formula srk combined_rec;
+      logf_noendl ~level:`info "    Combined recursive CHC:@.    ";
+      print_linked_formula ~level:`info srk combined_rec;
       (* Star it *)
       let tr = transition_of_linked_formula combined_rec in
-      Format.printf "    As transition:@.    %a@." K.pp tr;
+      logf_noendl ~level:`info "    As transition:@.    %a@." K.pp tr;
       let tr_star = K.star tr in 
-      Format.printf "    Starred:@.    %a@." K.pp tr_star;
+      logf_noendl ~level:`info "    Starred:@.    %a@." K.pp tr_star;
       let tr_star_rule = 
         linked_formula_of_transition tr_star combined_rec in
-      Format.printf "    Starred as CHC:@.    ";
-      print_linked_formula srk tr_star_rule;
+      logf_noendl ~level:`info "    Starred as CHC:@.    ";
+      print_linked_formula ~level:`info srk tr_star_rule;
       (* Use substitution to apply the starred rule onto 
          every other matrix entry corresponding to a rule 
          that has conclusion p *)
@@ -1105,7 +1114,7 @@ let analyze_scc finished_flag summaries rulemap query_int scc =
       analyze_query_predicate rule_matrix query_int const_id   
     | _ -> 
       (* Now, eliminate predicates from this SCC one at a time*)
-      Format.printf "  Eliminating predicates@.";
+      logf ~level:`info "  Eliminating predicates";
       List.iter (eliminate_predicate rule_matrix query_int const_id) scc;
       (* The remaining matrix entries are summaries; 
          they have no hypothesis predicate occurrences *)
@@ -1159,7 +1168,7 @@ let analyze_smt2 filename =
   let rules = build_linked_formulas parsingCtx srk phi query_int in 
   List.iter 
     (fun rule -> 
-        Format.printf "Incoming CHC: @.  ";
+        logf_noendl ~level:`info "Incoming CHC: @.  ";
         print_linked_formula srk rule) 
     rules;
   analyze_ruleset rules query_int
