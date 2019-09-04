@@ -1195,12 +1195,21 @@ let parse_smt2 filename =
             print_linked_formula srk final_rule;
             Format.printf "@.";
             let (conc, hyps, final_phi) = final_rule in
-            let wedge = Wedge.abstract srk final_phi in
-            Format.printf "Wedge: @.  %a@." (Wedge.pp) wedge;
+            (*let wedge = Wedge.abstract srk final_phi in
+            Format.printf "Wedge: @.  %a@." (Wedge.pp) wedge;*)
             (match Wedge.is_sat srk final_phi with
             | `Sat -> Format.printf "RESULT: UNKNOWN (final constraint is sat)@."
             | `Unsat -> Format.printf "RESULT: SAT (final constraint is unsat)@."
-            | `Unknown -> Format.printf "RESULT: UNKNOWN (final constraint unknown)@."))
+            | `Unknown -> 
+              ((*Format.printf "RESULT: UNKNOWN (final constraint unknown)@.";*)
+               Format.printf "Preliminary: unknown (final constraint unknown)@.";
+               Format.printf "Retrying...@.";
+               let wedge = Wedge.abstract srk final_phi in
+               if Wedge.is_bottom wedge
+               then Format.printf "RESULT: SAT (final constraint is unsat)@."
+               else Format.printf "RESULT: UNKNOWN (final constraint unknown)@."
+              )
+            ))
       | _ -> 
       begin
         (* Now, eliminate predicates from this SCC one at a time*)
