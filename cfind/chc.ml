@@ -19,28 +19,6 @@ end
 module IntPairMap = BatMap.Make(IntPair)
 module IntPairSet = BatSet.Make(IntPair)
 
-
-(*module CallGraph = struct
-  type t = CallSet.t M.t
-  module V = (*IntPair*) SrkUtil.Int
-  let iter_vertex f callgraph =
-    M.iter (fun k _ -> f k) callgraph
-  let iter_succ f callgraph v =
-    CallSet.iter f (M.find v callgraph)
-  let add_vertex callgraph v =
-    if M.mem v callgraph then
-      callgraph
-    else
-      M.add v CallSet.empty callgraph
-  let add_edge callgraph u v =
-    let callgraph = add_vertex callgraph v in
-    if M.mem u callgraph then
-      M.add u (CallSet.add v (M.find u callgraph)) callgraph
-    else
-      M.add u (CallSet.singleton v) callgraph
-  let empty = M.empty
-end*)
-
 module CallGraphSCCs = Graph.Components.Make(CallGraph)
 
 module Sctx = Syntax.MakeSimplifyingContext ()
@@ -912,15 +890,6 @@ let build_linked_formulas srk1 srk2 phi query_pred =
     (* *)
   in
   List.map linked_formula_of_rule rules
-
-(*
-let add_entry_to_matrix matrix rowid colid value = 
-  (if not (BatMap.Int.mem rowid !matrix) then
-    BatMap.Int.add !matrix rowid (BatMap.Int.empty));
-  let row = BatMap.Int.find rowid !matrix in
-  let row = BatMap.Int.add colid value row in
-  matrix := BatMap.
-*)
 
 let new_empty_matrix () = ref IntPairMap.empty
 
