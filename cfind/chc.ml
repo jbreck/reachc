@@ -1190,7 +1190,7 @@ let _ =
      " Use VAS abstraction");
   CmdLine.register_config
     ("-vass",
-     Arg.Unit (fun () -> Format.printf "HELLO@."; IterDomain.VasSwitch.abstract_left := false; IterDomain.SpPlusSplitVas_P.abstract_left := false),
+     Arg.Unit (fun () -> IterDomain.VasSwitch.abstract_left := false; IterDomain.SpPlusSplitVas_P.abstract_left := false),
      " Use VASS abstraction");
   CmdLine.register_config
     ("-refine",
