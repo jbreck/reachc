@@ -48,6 +48,11 @@ module Pctx = Syntax.MakeContext ()
 let parsingCtx = Pctx.context
 let srk = Sctx.context
 
+let name_of_symbol ctx symbol = 
+  match Syntax.symbol_name ctx symbol with
+  | None -> Syntax.show_symbol ctx symbol
+  | Some name -> name
+
 (* Initially based on module Var as defined in   duet/cra.ml  *)
 module Var = struct
   let sym_to_var = Hashtbl.create 991
@@ -68,10 +73,16 @@ module Var = struct
   module I = struct
     (*type t = int [@@deriving ord]*)
     type t = Syntax.symbol [@@deriving ord]
+
+    (* Note: hardcoding srk *)
     let pp formatter var =
       let sym = symbol_of var in
       Format.fprintf formatter "%a" (Syntax.pp_symbol srk) sym
-    let show = SrkUtil.mk_show pp
+    (*let show = SrkUtil.mk_show pp*)
+    let show var = 
+      let sym = symbol_of var in
+      name_of_symbol srk sym
+
     let equal x y = compare x y = 0
     let hash var = Hashtbl.hash var
   end
@@ -578,7 +589,7 @@ let fresh_skolem_except rule pred_occs =
   let fresh_skolem =
     Memo.memo 
       (fun sym ->
-        let name = Syntax.show_symbol srk sym in
+        let name = name_of_symbol srk sym in
         let typ = Syntax.typ_symbol srk sym in
         Syntax.mk_symbol srk ~name typ) in
   let map_symbol sym = 
@@ -848,7 +859,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
               end
             in
           let (argsymbols, predlist, eqlist) = accum_arg_info args [] [] [] in
-          let pred_occ = (fnumber, argsymbols) in
+          let pred_occ = (fnumber, (List.rev argsymbols)) in
           (Syntax.mk_true srk2, pred_occ::predlist, eqlist)
         (* Recursive nodes: bool from something *)
         | `Ite (cond, bthen, belse) ->
@@ -1214,7 +1225,7 @@ let parse_smt2 filename =
                 Format.printf "    %a@." K.pp tr_star;
                 let tr_star_rule = 
                   linked_formula_of_transition tr_star combined_rec in
-                Format.printf "    Starred as CHC:@.  ";
+                Format.printf "    Starred as CHC:@.    ";
                 print_linked_formula srk tr_star_rule;
                 (* *)
                 matrix_row_iteri rule_matrix p
