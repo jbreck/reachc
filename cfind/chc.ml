@@ -1,4 +1,5 @@
 module Log = Srk.Log
+include Srk.Log.Make(struct let name = "cra" end)
 open Srk
 
 let cra_refine_flag = ref false
@@ -1116,14 +1117,17 @@ let eliminate_predicate rule_matrix query_int const_id p =
           | Some prev_rule ->
             let combined_rule = 
               disjoin_linked_formulas [prev_rule; sub_rule] in
-            assign_matrix_element rule_matrix q r combined_rule))
+            assign_matrix_element rule_matrix q r combined_rule));
+  (* Now, set all the entries in column p to zero *)
+  matrix_col_iteri rule_matrix p 
+    (fun q _ _ -> remove_matrix_element rule_matrix q p)
   (* At this point, p has been eliminated from the system *)
 
 let analyze_scc finished_flag summaries rulemap query_int scc = 
   if !finished_flag then () else 
   begin
     print_scc scc;
-    let const_id = (List.hd (List.sort compare scc)) - 1 in
+    let const_id = (* (List.hd (List.sort compare scc)) *) -1 in
     assert (not (List.mem const_id scc));
     let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
     match scc with
@@ -1144,29 +1148,7 @@ let analyze_scc finished_flag summaries rulemap query_int scc =
         scc
   end
 
-let analyze_chc_system callgraph_sccs rulemap query_int = 
-  (* print_condensed_graph callgraph_sccs; *)
-  let summaries = ref BatMap.Int.empty in
-  let finished_flag = ref false in
-  List.iter
-    (analyze_scc finished_flag summaries rulemap query_int)
-    callgraph_sccs
-
-let analyze_smt2 filename =  
-  (* FIXME let Z3 read the whole file... *)
-  let chan = open_in filename in
-  let str = really_input_string chan (in_channel_length chan) in
-  close_in chan;
-  let z3ctx = Z3.mk_context [] in
-  let phi = SrkZ3.load_smtlib2 ~context:z3ctx parsingCtx str in
-  let query_sym = Syntax.mk_symbol srk ~name:"QUERY" `TyBool in
-  let query_int = Syntax.int_of_symbol query_sym in  
-  let rules = build_linked_formulas parsingCtx srk phi query_int in 
-  let _ = List.iter 
-    (fun rule -> 
-        Format.printf "Incoming CHC: @.  ";
-        print_linked_formula srk rule) 
-    rules in 
+let analyze_ruleset rules query_int = 
   let callgraph = List.fold_left
     (fun graph rule ->
       let conc_pred_id = conc_pred_id_of_linked_formula rule in
@@ -1189,7 +1171,29 @@ let analyze_smt2 filename =
     rules
   in
   let callgraph_sccs = CallGraphSCCs.scc_list callgraph in
-  analyze_chc_system callgraph_sccs rulemap query_int
+  (* print_condensed_graph callgraph_sccs; *)
+  let summaries = ref BatMap.Int.empty in
+  let finished_flag = ref false in
+  List.iter
+    (analyze_scc finished_flag summaries rulemap query_int)
+    callgraph_sccs
+
+let analyze_smt2 filename =  
+  (* FIXME let Z3 read the whole file... *)
+  let chan = open_in filename in
+  let str = really_input_string chan (in_channel_length chan) in
+  close_in chan;
+  let z3ctx = Z3.mk_context [] in
+  let phi = SrkZ3.load_smtlib2 ~context:z3ctx parsingCtx str in
+  let query_sym = Syntax.mk_symbol srk ~name:"QUERY" `TyBool in
+  let query_int = Syntax.int_of_symbol query_sym in  
+  let rules = build_linked_formulas parsingCtx srk phi query_int in 
+  List.iter 
+    (fun rule -> 
+        Format.printf "Incoming CHC: @.  ";
+        print_linked_formula srk rule) 
+    rules;
+  analyze_ruleset rules query_int
 
 let _ = 
   CmdLine.register_main_pass analyze_smt2;;
