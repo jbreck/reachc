@@ -501,6 +501,73 @@ let linked_formula_of_transition tr model_rule =
   let new_conc_pred = (conc_pred_num, new_args) in 
   (new_conc_pred, hyp_preds, body)
 
+let subst_in_pred pred var_to var_from = 
+  let (pred_num, pred_vars) = pred in
+  let new_vars = 
+    List.map
+      (fun old_var -> if old_var = var_from then var_to else old_var)
+      pred_vars in
+  (pred_num, new_vars)
+
+let subst_in_preds preds var_to var_from = 
+  List.map
+    (fun pred -> subst_in_pred pred var_to var_from)
+    preds
+
+
+
+(* 
+ * How to handle re-use of variables...
+ * - 
+ * Algorithm for uniquing:
+ *  - ...
+ *)
+
+
+(*
+
+*)
+
+let make_vars_unique rule = 
+  let (conc_pred, hyp_preds, phi) = rule in 
+  let all_preds = conc_pred::hyp_preds in 
+  let used_vars = ref Syntax.Symbol.Set.empty in 
+  let pairs = ref [] in 
+  let make_vars_unique_in_pred pred = 
+    let (pred_num, pred_vars) = pred in 
+    let rec go pred_vars = 
+      match pred_vars with 
+      | pred_var::rest -> 
+        let replaced_vars = go rest in 
+        if Syntax.Symbol.Set.mem pred_var !used_vars 
+        then 
+          let new_var = 
+            Syntax.mk_symbol srk 
+              ~name:("Dedup_"^(Syntax.show_symbol srk pred_var)) 
+              `TyInt in 
+          pairs := (pred_var,new_var)::(!pairs); 
+          new_var::replaced_vars
+        else 
+          pred_var::replaced_vars
+      | [] ->
+        pred_vars
+    in
+    (pred_num, go pred_vars)
+  in
+  let new_preds = List.map make_vars_unique_in_pred all_preds in
+  match new_preds with
+  | new_conc_pred :: new_hyp_preds ->
+    let equalities = 
+      List.map
+        (fun (old_var,new_var) ->
+           let old_c = Syntax.mk_const srk old_var in
+           let new_c = Syntax.mk_const srk new_var in
+           Syntax.mk_eq srk old_c new_c) 
+        !pairs in
+    let new_phi = Syntax.mk_and srk (phi::equalities) in 
+    (new_conc_pred, new_hyp_preds, new_phi)
+  | _ -> failwith "Should not happen"
+
 (** Given a formula phi and two predicate occurrences pred_occ1 and pred_occ2,
  *    of the form pred_occ1(v_1,...,v_n)
  *            and pred_occ2(w_1,...,w_n)
@@ -568,6 +635,9 @@ let fresh_skolem_except rule pred_occs =
   let new_phi = Syntax.substitute_const srk map_symbol_const phi in
   (new_conc_pred, new_hyp_preds, new_phi)
 
+(* Given two CHCs rule1 and rule2 that have the same conclusion predicate and 
+ *   the same list of hypothesis predicates, rewrite rule2 to use the same
+ *   variable names used by rule1 *)
 let substitute_args_rule rule1 rule2 = 
   let (conc_pred1, hyp_preds1, phi1) = rule1 in
   let (conc_pred2, hyp_preds2, phi2) = rule2 in
@@ -575,11 +645,12 @@ let substitute_args_rule rule1 rule2 =
   let (conc_pred_num2, _) = conc_pred2 in
   assert (conc_pred_num1 = conc_pred_num2);
   let phi2 = substitute_args_pred conc_pred1 conc_pred2 phi2 in
-  (* Note: the following assumes that the two hypothesis predicate 
+  (* Note: the following asserts that the two hypothesis predicate 
        occurrence lists have the same order, which isn't strictly necessary *)
   let rec go preds1 preds2 phi =
     match (preds1,preds2) with
     | (pred1::more_preds1,pred2::more_preds2) ->
+      (* The following call asserts that pred1 = pred2 *)
       let phi = substitute_args_pred pred1 pred2 phi in 
       go more_preds1 more_preds2 phi
     | ([],[]) -> phi
@@ -594,6 +665,8 @@ let disjoin_linked_formulas rules =
   | [rule1] -> rule1
   | rule1::old_rules ->
     let (conc_pred1, hyp_preds1, phi1) = rule1 in
+    (* FIXME: Should rewrite rule1 first so that it has no duplicate
+       occurrences of variables in its predicates *)
     let new_phis = 
       List.map 
         (fun old_rule -> 
@@ -895,7 +968,8 @@ let build_linked_formulas srk1 srk2 phi query_pred =
       if (List.length eqs) > 0
       then Syntax.mk_and srk2 (hyp_sub::eqs)
       else hyp_sub in
-    (conc_pred_occ, hyp_preds, phi)
+    let new_rule = (conc_pred_occ, hyp_preds, phi) in 
+    (make_vars_unique new_rule)
     (* *)
   in
   List.map linked_formula_of_rule rules
