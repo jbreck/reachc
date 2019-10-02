@@ -565,7 +565,8 @@ let make_vars_unique rule =
           pairs := (pred_var,new_var)::(!pairs); 
           new_var::replaced_vars
         else 
-          pred_var::replaced_vars
+         (used_vars := Syntax.Symbol.Set.add pred_var !used_vars;
+          pred_var::replaced_vars)
       | [] ->
         pred_vars
     in
