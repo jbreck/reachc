@@ -4,6 +4,7 @@ open Srk
 
 let cra_refine_flag = ref false
 let retry_flag = ref true
+let print_summaries_flag = ref false
 
 module CallGraph = Graph.Persistent.Digraph.ConcreteBidirectional(SrkUtil.Int)
 
@@ -385,7 +386,23 @@ let print_linked_formula ?(level=`info) srk rule =
     (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
     hyp_preds;
   logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) phi;
-  print_pred_occ srk conc_pred;
+  print_pred_occ ~level srk conc_pred;
+  logf_noendl ~level "@] }@."
+
+let print_linked_formula_as_wedge ?(level=`info) srk rule = 
+  let (conc_pred, hyp_preds, phi) = rule in
+  logf_noendl ~level "{ @[";
+  List.iter 
+    (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
+    hyp_preds;
+  let all_preds = conc_pred::hyp_preds in 
+  let all_pred_vars =
+    List.concat
+      (List.map (fun (pred_num,vars) -> vars) all_preds) in
+  let exists = (fun sym -> List.mem sym all_pred_vars) in 
+  let wedge = Wedge.abstract ~exists srk phi in
+  logf_noendl ~level "%a@ -> " Wedge.pp wedge;
+  print_pred_occ ~level srk conc_pred;
   logf_noendl ~level "@] }@."
 
 let conc_pred_occ_of_linked_formula rule = 
@@ -1200,6 +1217,20 @@ let analyze_scc finished_flag summaries rulemap query_int scc =
         scc
   end
 
+let print_summaries summaries = 
+  logf ~level:`always "\n** Summaries as formulas **\n";
+  BatMap.Int.iter
+    (fun pred_num summary_rule ->
+        print_linked_formula ~level:`always srk summary_rule;
+        logf ~level:`always "  ")
+    !summaries;
+  logf ~level:`always "\n** Summaries as wedges **\n";
+  BatMap.Int.iter
+    (fun pred_num summary_rule ->
+        print_linked_formula_as_wedge ~level:`always srk summary_rule;
+        logf ~level:`always "  ")
+    !summaries
+
 let analyze_ruleset rules query_int = 
   let callgraph = List.fold_left
     (fun graph rule ->
@@ -1228,7 +1259,8 @@ let analyze_ruleset rules query_int =
   let finished_flag = ref false in
   List.iter
     (analyze_scc finished_flag summaries rulemap query_int)
-    callgraph_sccs
+    callgraph_sccs;
+  (if !print_summaries_flag then print_summaries summaries)
 
 let analyze_smt2 filename =  
   (* FIXME let Z3 read the whole file... *)
@@ -1283,5 +1315,9 @@ let _ =
     ("-no-retry",
      Arg.Clear retry_flag,
      " Turn off automatic retry after unknown Z3 result");
+  CmdLine.register_config
+    ("-summaries",
+     Arg.Set print_summaries_flag,
+     " Turn on loop splitting");
   ();;
 
