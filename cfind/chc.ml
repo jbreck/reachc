@@ -1046,6 +1046,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
             (* The boolean quantified variable var is being asserted. *)
             (* We replace v with an integer variable w and assert w == 1. *)
             let sym = var_to_skolem var in 
+            mut_booleans := sym :: !mut_booleans;
             Syntax.mk_eq srk2 (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.one) 
           | `Proposition (`App (f, args)) ->
             (* A horn-clause-predicate occurrence *)
@@ -1189,6 +1190,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
       in
       let phi = go_formula expr in
       (phi, !mut_predicates, !mut_equations, !mut_booleans)
+      (* end of convert_formula *)
     in
     let (hyp_sub,hyp_preds,hyp_eqs,hyp_bools) = convert_formula hyp in
     let (conc_sub,conc_preds,conc_eqs,conc_bools) = convert_formula conc in
@@ -1202,11 +1204,18 @@ let build_linked_formulas srk1 srk2 phi query_pred =
     in 
     let eqs = hyp_eqs @ conc_eqs in
     let bools = hyp_bools @ conc_bools in
-    (*let phi = 
-      if (List.length eqs) > 0
-      then Syntax.mk_and srk2 (hyp_sub::eqs)
-      else hyp_sub in*)
-    let phi = Syntax.mk_and srk2 (hyp_sub::eqs) in
+    let bool_constraints = 
+      List.map 
+        (fun boolsym ->
+           Syntax.mk_or srk2
+             [(Syntax.mk_eq srk2 
+               (Syntax.mk_const srk2 boolsym) 
+              (Syntax.mk_real srk2 (QQ.zero))); 
+             (Syntax.mk_eq srk2 
+               (Syntax.mk_const srk2 boolsym) 
+             (Syntax.mk_real srk2 (QQ.one)))])
+       bools in
+    let phi = Syntax.mk_and srk2 (hyp_sub::(eqs @ bool_constraints)) in
     let new_rule = (conc_pred_occ, hyp_preds, phi) in 
     (make_vars_unique new_rule)
     (* *)
