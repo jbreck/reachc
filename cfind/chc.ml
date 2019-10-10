@@ -786,18 +786,34 @@ let build_linked_formulas srk1 srk2 phi query_pred =
     let convert_formula expr = 
       let mut_equations = ref [] in
       let mut_predicates = ref [] in
-      let mut_booleans = ref [] in
+      let mut_booleans = ref Syntax.Symbol.Set.empty in
       let rec go_formula expr = 
         begin
           match Syntax.Formula.destruct srk1 expr with
+          (* Negation node *)
+          | `Not p ->
+            begin
+              match Syntax.Formula.destruct srk1 p with
+              | `Proposition (`Var var) ->
+                (* Special case: *)
+                (* The boolean quantified variable var appears negatively here. *)
+                (* We replace v with an integer variable w and assert w == 0. *)
+                let sym = var_to_skolem var in 
+                mut_booleans := Syntax.Symbol.Set.add sym !mut_booleans;
+                Syntax.mk_eq srk2 (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.zero) 
+              | _ -> 
+              (* General case of negation: *)
+              let subexpr = go_formula p in
+              Syntax.mk_not srk2 subexpr
+            end
           (* Non-recursive nodes *)
           | `Tru -> Syntax.mk_true srk2
           | `Fls -> Syntax.mk_false srk2
           | `Proposition (`Var var) ->
-            (* The boolean quantified variable var is being asserted. *)
+            (* The boolean quantified variable var appears positively here. *)
             (* We replace v with an integer variable w and assert w == 1. *)
             let sym = var_to_skolem var in 
-            mut_booleans := sym :: !mut_booleans;
+            mut_booleans := Syntax.Symbol.Set.add sym !mut_booleans;
             Syntax.mk_eq srk2 (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.one) 
           | `Proposition (`App (f, args)) ->
             (* A horn-clause-predicate occurrence *)
@@ -807,10 +823,12 @@ let build_linked_formulas srk1 srk2 phi query_pred =
               match arglist with
               | [] -> symbollist
               | orig_arg::more_args ->
+                (* orig_arg is an argument to a horn-clause predicate *)
                 begin
                   match Syntax.Expr.refine srk1 orig_arg with
                   | `Term arg ->
                   begin
+                    (* Integer argument to horn-clause predicate *)
                     match Syntax.destruct srk1 arg with
                     | `Var (v, `TyInt) -> 
                       accum_arg_info more_args ((var_to_skolem v)::symbollist)
@@ -825,20 +843,32 @@ let build_linked_formulas srk1 srk2 phi query_pred =
                   end
                   | `Formula arg ->
                   begin
-                    let subformula = go_formula arg in
-                    let formulasymbol = Syntax.mk_symbol srk2 ~name:"FormulaSymbol" `TyInt in
-                    let formulatrue = 
-                      (Syntax.mk_eq srk2 
-                        (Syntax.mk_const srk2 formulasymbol) 
-                        (Syntax.mk_real srk2 (QQ.one))) in
-                    let notf f = Syntax.mk_not srk2 f in
-                    let formulaiff = 
-                        Syntax.mk_or srk2 
-                          [Syntax.mk_and srk2 [     formulatrue;     subformula]; 
-                           Syntax.mk_and srk2 [notf formulatrue;notf subformula]]
-                    in
-                    mut_equations := formulaiff :: !mut_equations;
-                    accum_arg_info more_args (formulasymbol::symbollist)
+                    (* Boolean argument to horn-clause predicate *)
+                    match Syntax.Formula.destruct srk1 arg with
+                    | `Proposition (`Var var) ->
+                      (* Common case: boolean variable *)
+                      let sym = var_to_skolem var in 
+                      (*mut_booleans := Syntax.Symbol.Set.add sym !mut_booleans;*)
+                      accum_arg_info more_args (sym::symbollist)
+                    | _ -> 
+                      let subformula = go_formula arg in
+                      let formulasymbol = Syntax.mk_symbol srk2 ~name:"FormulaSymbol" `TyInt in
+                      let formulatrue = 
+                        (Syntax.mk_eq srk2 
+                          (Syntax.mk_const srk2 formulasymbol) 
+                          (Syntax.mk_real srk2 (QQ.one))) in
+                      let formulafalse = 
+                        (Syntax.mk_eq srk2 
+                          (Syntax.mk_const srk2 formulasymbol) 
+                          (Syntax.mk_real srk2 (QQ.zero))) in
+                      let notf f = Syntax.mk_not srk2 f in
+                      let formulaiff = 
+                          Syntax.mk_or srk2 
+                            [Syntax.mk_and srk2 [ formulatrue;      subformula]; 
+                             Syntax.mk_and srk2 [formulafalse; notf subformula]]
+                      in
+                      mut_equations := formulaiff :: !mut_equations;
+                      accum_arg_info more_args (formulasymbol::symbollist)
                   end
                 end
               in
@@ -859,9 +889,6 @@ let build_linked_formulas srk1 srk2 phi query_pred =
           | `Or exprs ->
             let subexprs = combine_formulas exprs in  
             Syntax.mk_or srk2 subexprs
-          | `Not p ->
-            let subexpr = go_formula p in
-            Syntax.mk_not srk2 subexpr
           (* Recursive nodes: bool from int *)
           | `Atom (op, s, t) -> 
             let (s_sub,t_sub) = combine_two_terms s t in
@@ -954,7 +981,8 @@ let build_linked_formulas srk1 srk2 phi query_pred =
       | _ -> failwith "Unrecognized rule format (Multiple conclusion predicate)"
     in 
     let eqs = hyp_eqs @ conc_eqs in
-    let bools = hyp_bools @ conc_bools in
+    let bools = Syntax.Symbol.Set.to_list 
+      (Syntax.Symbol.Set.union hyp_bools conc_bools) in
     let bool_constraints = 
       List.map 
         (fun boolsym ->
