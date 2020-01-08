@@ -209,6 +209,21 @@ module DomainRefinement (PreKleeneWithoutTiming : PreKleeneAlgebra) = struct
   
   module TopL = Topological.Make(LGraph)
 
+  (*
+  (* Only needed for visualization *)
+  module Vis = Graphviz.Dot(
+    struct 
+      include RGraph
+      let graph_attributes g = []
+      let default_vertex_attributes g = []
+      let vertex_name v = string_of_int v
+      let vertex_attributes v = []
+      let get_subgraph v = None
+      let default_edge_attributes g = []
+      let edge_attributes e = []
+    end)
+  *)
+
 (*  let build_refinement_graph labels infeasiblepairs = 
     let refinement_graph = RGraph.create () in
     List.iter (fun label -> RGraph.add_vertex refinement_graph label) labels;
@@ -341,9 +356,24 @@ module DomainRefinement (PreKleeneWithoutTiming : PreKleeneAlgebra) = struct
   let refine labels label_to_atom refinement_graph = 
     (* get the strongly conncected components *)
     let (nSCCs, mapToComp) = SCCmod.scc refinement_graph in
-
+    
     (* sccCycles is an array where sccCycles.(mapToComp node1) = sccCycles.(mapToComp node2) for any two nodes in the same scc. Also each element of sccCycles is a list of lists, where each sublist is a cycle in the strongly connected component and each cycle is oriented the same way *)
     let sccCycles = get_scc_expr_cycles refinement_graph nSCCs mapToComp in
+
+    (*Array.iteri
+      (fun sccNum cycle_list ->
+        Format.printf " %d : @." sccNum;
+        List.iter 
+          (fun cycle ->
+            Format.printf "[";
+            List.iter
+              (fun v ->
+                Format.printf "%d;" v
+              ) cycle;
+            Format.printf "]@."
+          ) cycle_list;
+        Format.printf "@."
+      ) sccCycles;*)
 
     (* condPlus will be an automata where the only cycles are self-loops (the sccs) *)
     let condPlus = RGraph.create () in
@@ -379,7 +409,7 @@ module DomainRefinement (PreKleeneWithoutTiming : PreKleeneAlgebra) = struct
           cond_node_to_label := IntMap.add sccNum cycle_val !cond_node_to_label
         )
       ) sccCycles;
-
+    
     (* add the trivial scc nodes to condPlus *)
     RGraph.iter_vertex
       (fun v ->
@@ -426,7 +456,7 @@ module DomainRefinement (PreKleeneWithoutTiming : PreKleeneAlgebra) = struct
                     next_node_val := !next_node_val + 1;
                     cond_node_to_label := IntMap.add cond_node (label_to_atom node) !cond_node_to_label;
                     r_node_to_tail := IntMap.add node cond_node !r_node_to_tail;
-                    RGraph.add_vertex condPlus node
+                    RGraph.add_vertex condPlus cond_node
                   ) cycle_tail_nodes;
                 let cycle_tail_to_cond = List.map (fun r_node -> IntMap.find r_node !r_node_to_tail) cycle_tail_nodes in
                 let _ = List.fold_left
@@ -498,12 +528,27 @@ module DomainRefinement (PreKleeneWithoutTiming : PreKleeneAlgebra) = struct
         LGraph.add_vertex labeledDag v
       ) condPlus;
     
+    (* let refine_graph_oc = open_out "refine_graph.dot" in
+    Vis.output_graph refine_graph_oc refinement_graph;
+    close_out refine_graph_oc;
+    let cond_graph_oc = open_out "cond_graph.dot" in
+    Vis.output_graph cond_graph_oc condPlus;
+    close_out cond_graph_oc; 
+    RGraph.iter_vertex (
+      fun v -> 
+        Format.printf "Refine Node %d corresponds to cond graph node %d@." v (mapToComp v)
+    ) refinement_graph;*)
+
     RGraph.iter_edges
       (fun v1 v2 ->
-        let edge_label = (IntMap.find v2 !cond_node_to_label) in
+        let edge_label = 
+         try
+           (IntMap.find v2 !cond_node_to_label) 
+          with Not_found -> failwith ("Node: " ^ (string_of_int v2) ^ " not present")
+        in
         LGraph.add_edge_e labeledDag (LGraph.E.create v1 edge_label v2)
       ) condPlus;
-
+    
 
     (* labeledDag *)
 
