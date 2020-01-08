@@ -751,9 +751,9 @@ let build_linked_formulas srk1 srk2 phi query_pred =
     | `Or [nothyp; conc] ->
        (match Syntax.destruct srk1 nothyp with 
        | `Not (hyp) -> (hyp,conc,vars)::rules (* reverse? *)
-       | _ -> logf ~level:`fatal "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
+       | _ -> logf ~level:`always "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
               failwith "Unrecognized rule format (No negated hypothesis)")
-    | _ -> logf ~level:`fatal "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
+    | _ -> logf ~level:`always "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
            failwith "Unrecognized rule format (No top-level quantifier or disjunction)"
     in
   let rules = 
@@ -763,6 +763,8 @@ let build_linked_formulas srk1 srk2 phi query_pred =
         (fun rules psi -> get_rule [] rules psi)
         []
         parts
+    | `Tru -> logf ~level:`always "RESULT: SAT (warning: empty CHC program; EMPTY_PROGRAM)";
+      []
     | _ -> 
       (*uncomment to allow*) get_rule [] [] phi
       (*forbid*) (*failwith "Currently forbidden: single-clause CHC program"*)
