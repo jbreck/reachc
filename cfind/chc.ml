@@ -1330,6 +1330,6 @@ let _ =
   CmdLine.register_config
     ("-summaries",
      Arg.Set print_summaries_flag,
-     " Turn on loop splitting");
+     " Print summaries");
   ();;
 
