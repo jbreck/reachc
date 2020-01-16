@@ -532,19 +532,6 @@ let subst_in_preds preds var_to var_from =
     preds
 
 
-
-(* 
- * How to handle re-use of variables...
- * - 
- * Algorithm for uniquing:
- *  - ...
- *)
-
-
-(*
-
-*)
-
 let make_vars_unique rule = 
   let (conc_pred, hyp_preds, phi) = rule in 
   let all_preds = conc_pred::hyp_preds in 
