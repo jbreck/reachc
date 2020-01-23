@@ -1311,7 +1311,7 @@ let make_hypothetical_summary_chc info_structure fact_pred_occ : 'a linked_formu
 let make_final_summary_chc summary_fmla fact_pred_occ : 'a linked_formula =
     (fact_pred_occ, [], summary_fmla)
 
-let handle_nonlinear_scc scc rulemap summaries = 
+let summarize_nonlinear_scc scc rulemap summaries = 
   logf ~level:`info "SCC: non-super-linear@.";
   let subbed_chcs_map = 
     List.fold_left
@@ -1435,41 +1435,41 @@ let detect_linear_scc scc rulemap summaries =
     true
     scc
 
-let handle_linear_scc scc rulemap summaries query_int finished_flag = 
+let summarize_linear_scc scc rulemap summaries = 
   logf ~level:`info "SCC: linear@.";
   let const_id = (* (List.hd (List.sort compare scc)) *) -1 in
   assert (not (List.mem const_id scc));
   let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
-  match scc with
-    | [p] when p = query_int ->
-      finished_flag := true;
-      analyze_query_predicate rule_matrix query_int const_id
-    | _ -> 
-      begin
-        (* Now, eliminate predicates from this SCC one at a time*)
-        logf ~level:`info "  Eliminating predicates";
-        List.iter (eliminate_predicate rule_matrix (*query_int*) const_id) scc;
-        (* The remaining matrix entries are summaries; 
-           they have no hypothesis predicate occurrences *)
-        List.iter
-          (fun p ->
-            match get_matrix_element_opt rule_matrix p const_id with
-            | None -> failwith "Missing const_id entry in rule_matrix"
-            | Some rule -> summaries := (BatMap.Int.add p rule !summaries)) 
-          scc
-      end
+  (* Now, eliminate predicates from this SCC one at a time*)
+  logf ~level:`info "  Eliminating predicates";
+  List.iter (eliminate_predicate rule_matrix (*query_int*) const_id) scc;
+  (* The remaining matrix entries are summaries; 
+     they have no hypothesis predicate occurrences *)
+  List.iter
+    (fun p ->
+      match get_matrix_element_opt rule_matrix p const_id with
+      | None -> failwith "Missing const_id entry in rule_matrix"
+      | Some rule -> summaries := (BatMap.Int.add p rule !summaries)) 
+    scc
+
+let handle_query_predicate scc rulemap summaries query_int = 
+  logf ~level:`info "Analysis of query predicate:@.";
+  let const_id = -1 in
+  let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
+  (* The above call boils down to one disjoin_linked_formulas call *)
+  analyze_query_predicate rule_matrix query_int const_id
 
 let analyze_scc finished_flag summaries rulemap query_int scc =
   if !finished_flag then () else
-  begin
-    print_scc scc;
-      (* The main action of these handle_* functions is to compute
-         the appropriate predicate-summaries and add them to the
-         map called summaries *)
-      if detect_linear_scc scc rulemap summaries 
-      then handle_linear_scc scc rulemap summaries query_int finished_flag
-      else handle_nonlinear_scc scc rulemap summaries
-  end
+  print_scc scc;
+  match scc with
+  | [p] when p = query_int ->
+    handle_query_predicate scc rulemap summaries query_int;
+    finished_flag := true
+  | _ -> 
+    if detect_linear_scc scc rulemap summaries 
+    then summarize_linear_scc scc rulemap summaries
+    else summarize_nonlinear_scc scc rulemap summaries
 
 let print_summaries summaries = 
   logf ~level:`always "\n** Summaries as formulas **\n";
