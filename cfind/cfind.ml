@@ -17,7 +17,7 @@ open ConcDep
 open Chora*)
 
 (*open CmdLine*)
-open Chc
+open Analyzer
 
 let usage_msg = "Cfind program analyzer\nUsage: cfind [OPTIONS] file.smt2"
 
