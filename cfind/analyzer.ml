@@ -441,359 +441,365 @@ let logf_noendl ?(level=`info) =
   then Format.fprintf sf
   else Format.ifprintf sf
 
-let print_pred_occ ?(level=`info) srk pred_occ = 
-  let (pred_num, var_symbols) = pred_occ in 
-  let n_vars = List.length var_symbols in 
-  logf_noendl ~level "%s(" 
-    (Syntax.show_symbol srk (Syntax.symbol_of_int pred_num));
-  List.iteri 
-    (fun i sym ->
-      (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
-      logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;
-      if i != n_vars - 1 then logf_noendl ~level ",")
-    var_symbols;
-  logf_noendl ~level ")"
+module Chc = struct
 
-let print_linked_formula ?(level=`info) srk rule = 
-  let (conc_pred, hyp_preds, phi) = rule in
-  logf_noendl ~level "{ @[";
-  List.iter 
-    (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
-    hyp_preds;
-  logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) phi;
-  print_pred_occ ~level srk conc_pred;
-  logf_noendl ~level "@] }@."
-
-let print_linked_formula_as_wedge ?(level=`info) srk rule = 
-  let (conc_pred, hyp_preds, phi) = rule in
-  logf_noendl ~level "{ @[";
-  List.iter 
-    (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
-    hyp_preds;
-  let all_preds = conc_pred::hyp_preds in 
-  let all_pred_vars =
-    List.concat
-      (List.map (fun (pred_num,vars) -> vars) all_preds) in
-  let exists = (fun sym -> List.mem sym all_pred_vars) in 
-  let wedge = Wedge.abstract ~exists srk phi in
-  logf_noendl ~level "%a@ -> " Wedge.pp wedge;
-  print_pred_occ ~level srk conc_pred;
-  logf_noendl ~level "@] }@."
-
-let conc_pred_occ_of_linked_formula rule = 
+  let print_pred_occ ?(level=`info) srk pred_occ = 
+    let (pred_num, var_symbols) = pred_occ in 
+    let n_vars = List.length var_symbols in 
+    logf_noendl ~level "%s(" 
+      (Syntax.show_symbol srk (Syntax.symbol_of_int pred_num));
+    List.iteri 
+      (fun i sym ->
+        (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
+        logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;
+        if i != n_vars - 1 then logf_noendl ~level ",")
+      var_symbols;
+    logf_noendl ~level ")"
+  
+  let print_linked_formula ?(level=`info) srk rule = 
     let (conc_pred, hyp_preds, phi) = rule in
-    conc_pred
-
-let conc_pred_id_of_linked_formula rule = 
+    logf_noendl ~level "{ @[";
+    List.iter 
+      (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
+      hyp_preds;
+    logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) phi;
+    print_pred_occ ~level srk conc_pred;
+    logf_noendl ~level "@] }@."
+  
+  let print_linked_formula_as_wedge ?(level=`info) srk rule = 
     let (conc_pred, hyp_preds, phi) = rule in
-    let (pred_num, vars) = conc_pred in
-    pred_num
+    logf_noendl ~level "{ @[";
+    List.iter 
+      (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
+      hyp_preds;
+    let all_preds = conc_pred::hyp_preds in 
+    let all_pred_vars =
+      List.concat
+        (List.map (fun (pred_num,vars) -> vars) all_preds) in
+    let exists = (fun sym -> List.mem sym all_pred_vars) in 
+    let wedge = Wedge.abstract ~exists srk phi in
+    logf_noendl ~level "%a@ -> " Wedge.pp wedge;
+    print_pred_occ ~level srk conc_pred;
+    logf_noendl ~level "@] }@."
 
-let hyp_pred_ids_of_linked_formula rule = 
-    let (conc_pred, hyp_preds, phi) = rule in
-    List.map 
-      (fun pred_occ ->
-        let (pred_num, vars) = pred_occ in
-        pred_num)
-      hyp_preds
+  let conc_pred_occ_of_linked_formula rule = 
+      let (conc_pred, hyp_preds, phi) = rule in
+      conc_pred
+  
+  let conc_pred_id_of_linked_formula rule = 
+      let (conc_pred, hyp_preds, phi) = rule in
+      let (pred_num, vars) = conc_pred in
+      pred_num
+  
+  let hyp_pred_ids_of_linked_formula rule = 
+      let (conc_pred, hyp_preds, phi) = rule in
+      List.map 
+        (fun pred_occ ->
+          let (pred_num, vars) = pred_occ in
+          pred_num)
+        hyp_preds
 
-let transition_of_linked_formula rule = 
-    let (conc_pred, hyp_preds, phi) = rule in
+  let transition_of_linked_formula rule = 
+      let (conc_pred, hyp_preds, phi) = rule in
+      let (conc_pred_num, conc_vars) = conc_pred in
+      assert (List.length hyp_preds = 1);
+      let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
+      assert (hyp_pred_num = conc_pred_num);
+      Var.reset_tables;
+      List.iter (fun sym -> Var.register_var sym) hyp_vars;
+      (* conc_vars and hyp_vars are lists of symbols *)
+      let transform = 
+        List.map2 
+          (fun pre post -> 
+              ((* pre-state as variable *)
+               (match Var.of_symbol pre with
+               | Some v -> v
+               | _ -> failwith 
+                  "Unregistered variable in transition_of_linked_formula"),
+              (* post-state as term *)
+              Syntax.mk_const srk post))
+          hyp_vars
+          conc_vars
+        in
+      K.construct phi transform
+
+  (* Make a rule that corresponds to the identity transition, 
+     on the model of the given model_rule.
+     The returned rule will have the same predicate occurrences
+     as model_rule.  *)
+  let identity_linked_formula model_rule =
+    let (conc_pred, hyp_preds, _) = model_rule in
     let (conc_pred_num, conc_vars) = conc_pred in
     assert (List.length hyp_preds = 1);
     let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
     assert (hyp_pred_num = conc_pred_num);
-    Var.reset_tables;
-    List.iter (fun sym -> Var.register_var sym) hyp_vars;
-    (* conc_vars and hyp_vars are lists of symbols *)
-    let transform = 
-      List.map2 
-        (fun pre post -> 
-            ((* pre-state as variable *)
-             (match Var.of_symbol pre with
-             | Some v -> v
-             | _ -> failwith 
-                "Unregistered variable in transition_of_linked_formula"),
-            (* post-state as term *)
-            Syntax.mk_const srk post))
-        hyp_vars
-        conc_vars
-      in
-    K.construct phi transform
-
-(* Make a rule that corresponds to the identity transition, 
-   on the model of the given model_rule.
-   The returned rule will have the same predicate occurrences
-   as model_rule.  *)
-let identity_linked_formula model_rule =
-  let (conc_pred, hyp_preds, _) = model_rule in
-  let (conc_pred_num, conc_vars) = conc_pred in
-  assert (List.length hyp_preds = 1);
-  let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
-  assert (hyp_pred_num = conc_pred_num);
-  let eq_atoms = List.fold_left2
-    (fun atoms hyp_var conc_var ->
-        let atom = Syntax.mk_eq srk 
-          (Syntax.mk_const srk hyp_var) 
-          (Syntax.mk_const srk conc_var) 
-        in atom::atoms)
-    [] 
-    hyp_vars
-    conc_vars
-  in
-  let phi = Syntax.mk_and srk eq_atoms in
-  (conc_pred, hyp_preds, phi)
-
-let linked_formula_of_transition tr model_rule =
-  if K.is_one tr then identity_linked_formula model_rule else
-  let post_shim = Memo.memo 
-      (fun sym -> Syntax.mk_symbol srk 
-       ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
-  let (tr_symbols, post_def) =
-    BatEnum.fold (fun (symbols, post_def) (var, term) ->
-        let pre_sym = Var.symbol_of var in
-        match get_const srk term with
-        | Some existing_post_sym ->
-          ((pre_sym,existing_post_sym)::symbols,post_def)
-        | None -> 
-          let new_post_sym = post_shim pre_sym in
-          let post_term = Syntax.mk_const srk new_post_sym in
-          ((pre_sym,new_post_sym)::symbols,(Syntax.mk_eq srk post_term term)::post_def)
-        )
-      ([], [])
-      (K.transform tr)
-  in
-  let body =
-    SrkSimplify.simplify_terms srk (Syntax.mk_and srk ((K.guard tr)::post_def))
-  in
-  (* Now, body is a formula over the pre-state and post-state variable pairs
-     found in tr_symbols.  I assume that the pre-state variables haven't changed,
-     but the post-state variables may have changed.  Because the post-state 
-     variables may have changed, I will look up each of the variables in the
-     predicate-occurrence in the hypothesis of the model rule and find the
-     (new?) post-state variable that it corresponds to, and then I'll put that 
-     variable into the predicate-occurrence in the conclusion of the rule that
-     I return.  *)
-  let (conc_pred, hyp_preds, _) = model_rule in
-  let (conc_pred_num, _) = conc_pred in
-  assert (List.length hyp_preds = 1);
-  let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
-  assert (hyp_pred_num = conc_pred_num);
-  let new_args = 
-    List.map 
-      (fun hyp_var -> 
-         let rec go pairs = 
-           match pairs with
-           | (pre_sym, post_sym)::rest -> 
-                   if hyp_var = pre_sym then post_sym else go rest
-           | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
-                   failwith "Could not find symbol in linked_formula_of_transition"
-         in go tr_symbols)
-      hyp_vars in
-  let new_conc_pred = (conc_pred_num, new_args) in 
-  (new_conc_pred, hyp_preds, body)
-
-let subst_in_pred pred var_to var_from = 
-  let (pred_num, pred_vars) = pred in
-  let new_vars = 
-    List.map
-      (fun old_var -> if old_var = var_from then var_to else old_var)
-      pred_vars in
-  (pred_num, new_vars)
-
-let subst_in_preds preds var_to var_from = 
-  List.map
-    (fun pred -> subst_in_pred pred var_to var_from)
-    preds
-
-
-let make_vars_unique rule = 
-  let (conc_pred, hyp_preds, phi) = rule in 
-  let all_preds = conc_pred::hyp_preds in 
-  let used_vars = ref Syntax.Symbol.Set.empty in 
-  let pairs = ref [] in 
-  let make_vars_unique_in_pred pred = 
-    let (pred_num, pred_vars) = pred in 
-    let rec go pred_vars = 
-      match pred_vars with 
-      | pred_var::rest -> 
-        let replaced_vars = go rest in 
-        if Syntax.Symbol.Set.mem pred_var !used_vars 
-        then 
-          let new_var = 
-            Syntax.mk_symbol srk 
-              ~name:("Dedup_"^(Syntax.show_symbol srk pred_var)) 
-              `TyInt in 
-          pairs := (pred_var,new_var)::(!pairs); 
-          new_var::replaced_vars
-        else 
-         (used_vars := Syntax.Symbol.Set.add pred_var !used_vars;
-          pred_var::replaced_vars)
-      | [] ->
-        pred_vars
+    let eq_atoms = List.fold_left2
+      (fun atoms hyp_var conc_var ->
+          let atom = Syntax.mk_eq srk 
+            (Syntax.mk_const srk hyp_var) 
+            (Syntax.mk_const srk conc_var) 
+          in atom::atoms)
+      [] 
+      hyp_vars
+      conc_vars
     in
-    (pred_num, go pred_vars)
-  in
-  let new_preds = List.map make_vars_unique_in_pred all_preds in
-  match new_preds with
-  | new_conc_pred :: new_hyp_preds ->
-    let equalities = 
-      List.map
-        (fun (old_var,new_var) ->
-           let old_c = Syntax.mk_const srk old_var in
-           let new_c = Syntax.mk_const srk new_var in
-           Syntax.mk_eq srk old_c new_c) 
-        !pairs in
-    let new_phi = Syntax.mk_and srk (phi::equalities) in 
-    (new_conc_pred, new_hyp_preds, new_phi)
-  | _ -> failwith "Should not happen"
-
-(** Given a formula phi and two predicate occurrences pred_occ1 and pred_occ2,
- *    of the form pred_occ1(v_1,...,v_n)
- *            and pred_occ2(w_1,...,w_n)
- *    substitute each occurrence of w_i with v_i in phi *)
-let substitute_args_pred pred_occ1 pred_occ2 phi = 
-  (*Format.printf "  ~~ ~~  To-predicate:";
-  print_pred_occ srk pred_occ1;
-  Format.printf "@.";
-  Format.printf "  ~~ ~~From-predicate:";
-  print_pred_occ srk pred_occ2;
-  Format.printf "@.";*)
-  let (pred_num1, vs) = pred_occ1 in
-  let (pred_num2, ws) = pred_occ2 in
-  assert (pred_num1 = pred_num2);
-  let sub sym = 
-    let rec go list1 list2 =
-      match (list1,list2) with
-      | (vi::vrest,wi::wrest) ->
-        if sym = wi
-        then Syntax.mk_const srk vi
-        else go vrest wrest
-      | ([],[]) -> Syntax.mk_const srk sym
-      | _ -> failwith "Unequal-length variable lists in substitute_args"
-    in go vs ws 
+    let phi = Syntax.mk_and srk eq_atoms in
+    (conc_pred, hyp_preds, phi)
+  
+  let linked_formula_of_transition tr model_rule =
+    if K.is_one tr then identity_linked_formula model_rule else
+    let post_shim = Memo.memo 
+        (fun sym -> Syntax.mk_symbol srk 
+         ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
+    let (tr_symbols, post_def) =
+      BatEnum.fold (fun (symbols, post_def) (var, term) ->
+          let pre_sym = Var.symbol_of var in
+          match get_const srk term with
+          | Some existing_post_sym ->
+            ((pre_sym,existing_post_sym)::symbols,post_def)
+          | None -> 
+            let new_post_sym = post_shim pre_sym in
+            let post_term = Syntax.mk_const srk new_post_sym in
+            ((pre_sym,new_post_sym)::symbols,(Syntax.mk_eq srk post_term term)::post_def)
+          )
+        ([], [])
+        (K.transform tr)
     in
-  let new_phi = Syntax.substitute_const srk sub phi in
-  (*Format.printf "  ~~ ~~Formula before: %a@." (Syntax.Formula.pp srk) phi;
-  Format.printf "  ~~ ~~Formula  after: %a@." (Syntax.Formula.pp srk) new_phi;*)
-  new_phi
-
-(** Replace all skolem constants appearing in rule 
- *    with fresh skolem constants, except for those
- *    appearing in the given list of predicate occurrences *)
-let fresh_skolem_except rule pred_occs =
-  let keep = 
-    List.fold_left 
-      (fun keep pred_occ ->
-        let (pred_num, vars) = pred_occ in
-        List.fold_left
-          (fun keep sym ->
-             BatSet.Int.add (Syntax.int_of_symbol sym) keep)
-          keep
-          vars)
-      BatSet.Int.empty
-      pred_occs in
-  let fresh_skolem =
-    Memo.memo 
-      (fun sym ->
-        let name = name_of_symbol srk sym in
-        let typ = Syntax.typ_symbol srk sym in
-        Syntax.mk_symbol srk ~name typ) in
-  let map_symbol sym = 
-    if BatSet.Int.mem (Syntax.int_of_symbol sym) keep 
-    then sym 
-    else fresh_skolem sym in
-  let freshen_pred_occ pred_occ = 
-    let (pred_num, vars) = pred_occ in
-    let new_vars = List.map map_symbol vars in 
-    (pred_num, new_vars) in
-  let (conc_pred, hyp_preds, phi) = rule in
-  let new_conc_pred = freshen_pred_occ conc_pred in
-  let new_hyp_preds = List.map freshen_pred_occ hyp_preds in
-  let map_symbol_const sym = 
-    Syntax.mk_const srk (map_symbol sym) in
-  let new_phi = Syntax.substitute_const srk map_symbol_const phi in
-  (new_conc_pred, new_hyp_preds, new_phi)
-
-(* Given two CHCs rule1 and rule2 that have the same conclusion predicate and 
- *   the same list of hypothesis predicates, rewrite rule2 to use the same
- *   variable names used by rule1 *)
-let substitute_args_rule rule1 rule2 = 
-  let (conc_pred1, hyp_preds1, phi1) = rule1 in
-  let (conc_pred2, hyp_preds2, phi2) = rule2 in
-  let (conc_pred_num1, _) = conc_pred1 in
-  let (conc_pred_num2, _) = conc_pred2 in
-  assert (conc_pred_num1 = conc_pred_num2);
-  let phi2 = substitute_args_pred conc_pred1 conc_pred2 phi2 in
-  (* Note: the following asserts that the two hypothesis predicate 
-       occurrence lists have the same order, which isn't strictly necessary *)
-  let rec go preds1 preds2 phi =
-    match (preds1,preds2) with
-    | (pred1::more_preds1,pred2::more_preds2) ->
-      (* The following call asserts that pred1 = pred2 *)
-      let phi = substitute_args_pred pred1 pred2 phi in 
-      go more_preds1 more_preds2 phi
-    | ([],[]) -> phi
-    | _ -> failwith "Unequal-length predicate lists in disjoin_linked_formulas"
+    let body =
+      SrkSimplify.simplify_terms srk (Syntax.mk_and srk ((K.guard tr)::post_def))
     in
-  let phi2 = go hyp_preds1 hyp_preds2 phi2 in
-  (conc_pred1, hyp_preds1, phi2)
-
-let disjoin_linked_formulas rules =
-  match rules with
-  | [] -> failwith "Empty rule list in disjoin_linked_formulas"
-  | [rule1] -> rule1
-  | rule1::old_rules ->
-    let (conc_pred1, hyp_preds1, phi1) = rule1 in
-    (* FIXME: Should rewrite rule1 first so that it has no duplicate
-       occurrences of variables in its predicates *)
-    let new_phis = 
+    (* Now, body is a formula over the pre-state and post-state variable pairs
+       found in tr_symbols.  I assume that the pre-state variables haven't changed,
+       but the post-state variables may have changed.  Because the post-state 
+       variables may have changed, I will look up each of the variables in the
+       predicate-occurrence in the hypothesis of the model rule and find the
+       (new?) post-state variable that it corresponds to, and then I'll put that 
+       variable into the predicate-occurrence in the conclusion of the rule that
+       I return.  *)
+    let (conc_pred, hyp_preds, _) = model_rule in
+    let (conc_pred_num, _) = conc_pred in
+    assert (List.length hyp_preds = 1);
+    let (hyp_pred_num, hyp_vars) = List.hd hyp_preds in
+    assert (hyp_pred_num = conc_pred_num);
+    let new_args = 
       List.map 
-        (fun old_rule -> 
-           let new_rule = substitute_args_rule rule1 old_rule in
-           let new_rule = fresh_skolem_except new_rule (conc_pred1::hyp_preds1) in
-           let (_,_, new_phi) = new_rule in
-           new_phi)
-        old_rules in
-    (conc_pred1, hyp_preds1, Syntax.mk_or srk (phi1::new_phis))
+        (fun hyp_var -> 
+           let rec go pairs = 
+             match pairs with
+             | (pre_sym, post_sym)::rest -> 
+                     if hyp_var = pre_sym then post_sym else go rest
+             | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
+                     failwith "Could not find symbol in linked_formula_of_transition"
+           in go tr_symbols)
+        hyp_vars in
+    let new_conc_pred = (conc_pred_num, new_args) in 
+    (new_conc_pred, hyp_preds, body)
 
-let subst_all outer_rule inner_rule =
-  (*Format.printf "  ~~Inner rule initially:@.    ";
-  print_linked_formula srk inner_rule;
-  Format.printf "@.";*)
-  let (outer_conc, outer_hyps, outer_phi) = outer_rule in
-  let (inner_conc, inner_hyps, inner_phi) = inner_rule in
-  let (inner_conc_pred_num, _) = inner_conc in
-  let (outer_hyps_matching, outer_hyps_non_matching) = 
-    List.partition
-      (fun pred_occ ->
-        let (pred_num, vars) = pred_occ in
-        (pred_num = inner_conc_pred_num))
-      outer_hyps
+  (*
+  let subst_in_pred pred var_to var_from = 
+    let (pred_num, pred_vars) = pred in
+    let new_vars = 
+      List.map
+        (fun old_var -> if old_var = var_from then var_to else old_var)
+        pred_vars in
+    (pred_num, new_vars)
+  
+  let subst_in_preds preds var_to var_from = 
+    List.map
+      (fun pred -> subst_in_pred pred var_to var_from)
+      preds
+  *)
+
+  let make_vars_unique rule = 
+    let (conc_pred, hyp_preds, phi) = rule in 
+    let all_preds = conc_pred::hyp_preds in 
+    let used_vars = ref Syntax.Symbol.Set.empty in 
+    let pairs = ref [] in 
+    let make_vars_unique_in_pred pred = 
+      let (pred_num, pred_vars) = pred in 
+      let rec go pred_vars = 
+        match pred_vars with 
+        | pred_var::rest -> 
+          let replaced_vars = go rest in 
+          if Syntax.Symbol.Set.mem pred_var !used_vars 
+          then 
+            let new_var = 
+              Syntax.mk_symbol srk 
+                ~name:("Dedup_"^(Syntax.show_symbol srk pred_var)) 
+                `TyInt in 
+            pairs := (pred_var,new_var)::(!pairs); 
+            new_var::replaced_vars
+          else 
+           (used_vars := Syntax.Symbol.Set.add pred_var !used_vars;
+            pred_var::replaced_vars)
+        | [] ->
+          pred_vars
+      in
+      (pred_num, go pred_vars)
     in
-  (if List.length outer_hyps_matching = 0 
-  then failwith "Mismatched subst_all call"
-  else ());
-  let (new_hyps, new_phis) = 
-    List.fold_left
-      (fun (hyps,phis) outer_hyp -> 
-        (*Format.printf "  ~~Substituting for one outer hypothesis...@.";*)
-        let (outer_hyp_pred_num, outer_hyp_args) = outer_hyp in
-        assert (outer_hyp_pred_num = inner_conc_pred_num);
-        let new_phi = substitute_args_pred outer_hyp inner_conc inner_phi in
-        let new_rule = (outer_hyp, inner_hyps, new_phi) in
-        (*Format.printf "  ~~Rule after substitute_args_pred and before fresh_skolem:@.    ";
-        print_linked_formula srk new_rule;
-        Format.printf "@.";*)
-        let (new_conc, subbed_hyps, new_phi) = 
-          fresh_skolem_except new_rule [outer_hyp] in  
-        (subbed_hyps @ hyps, new_phi::phis))
-      ([],[])
-      outer_hyps_matching
-    in
-  let phi = Syntax.mk_and srk (outer_phi::new_phis) in
-  let hyps = outer_hyps_non_matching @ new_hyps in
-  (outer_conc, hyps, phi)
+    let new_preds = List.map make_vars_unique_in_pred all_preds in
+    match new_preds with
+    | new_conc_pred :: new_hyp_preds ->
+      let equalities = 
+        List.map
+          (fun (old_var,new_var) ->
+             let old_c = Syntax.mk_const srk old_var in
+             let new_c = Syntax.mk_const srk new_var in
+             Syntax.mk_eq srk old_c new_c) 
+          !pairs in
+      let new_phi = Syntax.mk_and srk (phi::equalities) in 
+      (new_conc_pred, new_hyp_preds, new_phi)
+    | _ -> failwith "Should not happen"
+
+
+  (** Given a formula phi and two predicate occurrences pred_occ1 and pred_occ2,
+   *    of the form pred_occ1(v_1,...,v_n)
+   *            and pred_occ2(w_1,...,w_n)
+   *    substitute each occurrence of w_i with v_i in phi *)
+  let substitute_args_pred pred_occ1 pred_occ2 phi = 
+    (*Format.printf "  ~~ ~~  To-predicate:";
+    print_pred_occ srk pred_occ1;
+    Format.printf "@.";
+    Format.printf "  ~~ ~~From-predicate:";
+    print_pred_occ srk pred_occ2;
+    Format.printf "@.";*)
+    let (pred_num1, vs) = pred_occ1 in
+    let (pred_num2, ws) = pred_occ2 in
+    assert (pred_num1 = pred_num2);
+    let sub sym = 
+      let rec go list1 list2 =
+        match (list1,list2) with
+        | (vi::vrest,wi::wrest) ->
+          if sym = wi
+          then Syntax.mk_const srk vi
+          else go vrest wrest
+        | ([],[]) -> Syntax.mk_const srk sym
+        | _ -> failwith "Unequal-length variable lists in substitute_args"
+      in go vs ws 
+      in
+    let new_phi = Syntax.substitute_const srk sub phi in
+    (*Format.printf "  ~~ ~~Formula before: %a@." (Syntax.Formula.pp srk) phi;
+    Format.printf "  ~~ ~~Formula  after: %a@." (Syntax.Formula.pp srk) new_phi;*)
+    new_phi
+  
+  (** Replace all skolem constants appearing in rule 
+   *    with fresh skolem constants, except for those
+   *    appearing in the given list of predicate occurrences *)
+  let fresh_skolem_except rule pred_occs =
+    let keep = 
+      List.fold_left 
+        (fun keep pred_occ ->
+          let (pred_num, vars) = pred_occ in
+          List.fold_left
+            (fun keep sym ->
+               BatSet.Int.add (Syntax.int_of_symbol sym) keep)
+            keep
+            vars)
+        BatSet.Int.empty
+        pred_occs in
+    let fresh_skolem =
+      Memo.memo 
+        (fun sym ->
+          let name = name_of_symbol srk sym in
+          let typ = Syntax.typ_symbol srk sym in
+          Syntax.mk_symbol srk ~name typ) in
+    let map_symbol sym = 
+      if BatSet.Int.mem (Syntax.int_of_symbol sym) keep 
+      then sym 
+      else fresh_skolem sym in
+    let freshen_pred_occ pred_occ = 
+      let (pred_num, vars) = pred_occ in
+      let new_vars = List.map map_symbol vars in 
+      (pred_num, new_vars) in
+    let (conc_pred, hyp_preds, phi) = rule in
+    let new_conc_pred = freshen_pred_occ conc_pred in
+    let new_hyp_preds = List.map freshen_pred_occ hyp_preds in
+    let map_symbol_const sym = 
+      Syntax.mk_const srk (map_symbol sym) in
+    let new_phi = Syntax.substitute_const srk map_symbol_const phi in
+    (new_conc_pred, new_hyp_preds, new_phi)
+  
+  (* Given two CHCs rule1 and rule2 that have the same conclusion predicate and 
+   *   the same list of hypothesis predicates, rewrite rule2 to use the same
+   *   variable names used by rule1 *)
+  let substitute_args_rule rule1 rule2 = 
+    let (conc_pred1, hyp_preds1, phi1) = rule1 in
+    let (conc_pred2, hyp_preds2, phi2) = rule2 in
+    let (conc_pred_num1, _) = conc_pred1 in
+    let (conc_pred_num2, _) = conc_pred2 in
+    assert (conc_pred_num1 = conc_pred_num2);
+    let phi2 = substitute_args_pred conc_pred1 conc_pred2 phi2 in
+    (* Note: the following asserts that the two hypothesis predicate 
+         occurrence lists have the same order, which isn't strictly necessary *)
+    let rec go preds1 preds2 phi =
+      match (preds1,preds2) with
+      | (pred1::more_preds1,pred2::more_preds2) ->
+        (* The following call asserts that pred1 = pred2 *)
+        let phi = substitute_args_pred pred1 pred2 phi in 
+        go more_preds1 more_preds2 phi
+      | ([],[]) -> phi
+      | _ -> failwith "Unequal-length predicate lists in disjoin_linked_formulas"
+      in
+    let phi2 = go hyp_preds1 hyp_preds2 phi2 in
+    (conc_pred1, hyp_preds1, phi2)
+  
+  let disjoin_linked_formulas rules =
+    match rules with
+    | [] -> failwith "Empty rule list in disjoin_linked_formulas"
+    | [rule1] -> rule1
+    | rule1::old_rules ->
+      let (conc_pred1, hyp_preds1, phi1) = rule1 in
+      (* FIXME: Should rewrite rule1 first so that it has no duplicate
+         occurrences of variables in its predicates *)
+      let new_phis = 
+        List.map 
+          (fun old_rule -> 
+             let new_rule = substitute_args_rule rule1 old_rule in
+             let new_rule = fresh_skolem_except new_rule (conc_pred1::hyp_preds1) in
+             let (_,_, new_phi) = new_rule in
+             new_phi)
+          old_rules in
+      (conc_pred1, hyp_preds1, Syntax.mk_or srk (phi1::new_phis))
+  
+  let subst_all outer_rule inner_rule =
+    (*Format.printf "  ~~Inner rule initially:@.    ";
+    print_linked_formula srk inner_rule;
+    Format.printf "@.";*)
+    let (outer_conc, outer_hyps, outer_phi) = outer_rule in
+    let (inner_conc, inner_hyps, inner_phi) = inner_rule in
+    let (inner_conc_pred_num, _) = inner_conc in
+    let (outer_hyps_matching, outer_hyps_non_matching) = 
+      List.partition
+        (fun pred_occ ->
+          let (pred_num, vars) = pred_occ in
+          (pred_num = inner_conc_pred_num))
+        outer_hyps
+      in
+    (if List.length outer_hyps_matching = 0 
+    then failwith "Mismatched subst_all call"
+    else ());
+    let (new_hyps, new_phis) = 
+      List.fold_left
+        (fun (hyps,phis) outer_hyp -> 
+          (*Format.printf "  ~~Substituting for one outer hypothesis...@.";*)
+          let (outer_hyp_pred_num, outer_hyp_args) = outer_hyp in
+          assert (outer_hyp_pred_num = inner_conc_pred_num);
+          let new_phi = substitute_args_pred outer_hyp inner_conc inner_phi in
+          let new_rule = (outer_hyp, inner_hyps, new_phi) in
+          (*Format.printf "  ~~Rule after substitute_args_pred and before fresh_skolem:@.    ";
+          print_linked_formula srk new_rule;
+          Format.printf "@.";*)
+          let (new_conc, subbed_hyps, new_phi) = 
+            fresh_skolem_except new_rule [outer_hyp] in  
+          (subbed_hyps @ hyps, new_phi::phis))
+        ([],[])
+        outer_hyps_matching
+      in
+    let phi = Syntax.mk_and srk (outer_phi::new_phis) in
+    let hyps = outer_hyps_non_matching @ new_hyps in
+    (outer_conc, hyps, phi)
+
+end
 
 let linked_formula_has_hyp rule target_hyp_num = 
   let (conc, hyps, phi) = rule in
@@ -1059,7 +1065,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
        bools in
     let phi = Syntax.mk_and srk2 (hyp_sub::(eqs @ bool_constraints)) in
     let new_rule = (conc_pred_occ, hyp_preds, phi) in 
-    (make_vars_unique new_rule)
+    (Chc.make_vars_unique new_rule)
     (* *)
   in
   List.map linked_formula_of_rule rules
@@ -1126,7 +1132,7 @@ let subst_summaries rules summaries =
           if BatMap.Int.mem pred_num summaries then
             let pred_summary = BatMap.Int.find pred_num summaries in
             (if linked_formula_has_hyp rule_inprog pred_num then
-              subst_all rule_inprog pred_summary
+              Chc.subst_all rule_inprog pred_summary
             else rule_inprog)
           else 
             rule_inprog)
@@ -1196,7 +1202,7 @@ let build_rule_matrix scc rulemap summaries const_id =
             print_linked_formula srk r;
             Format.printf "@.")
           rules;*)
-          let combined_rule = disjoin_linked_formulas rules in
+          let combined_rule = Chc.disjoin_linked_formulas rules in
           assign_matrix_element rule_matrix p colid combined_rule)
     ) scc;
   rule_matrix  
@@ -1206,7 +1212,7 @@ let analyze_query_predicate rule_matrix query_int const_id =
   | None -> failwith "Missing final CHC"
   | Some final_rule -> 
     logf_noendl ~level:`info "Final CHC: @.  ";
-    print_linked_formula ~level:`info srk final_rule;
+    Chc.print_linked_formula ~level:`info srk final_rule;
     logf ~level:`info "";
     let (conc, hyps, final_phi) = final_rule in
     begin
@@ -1238,23 +1244,23 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
       (* Obtain the direct-recursion entry from the matrix *)
       let combined_rec = get_matrix_element rule_matrix p p in
       logf_noendl ~level:`info "    Combined recursive CHC:@.    ";
-      print_linked_formula ~level:`info srk combined_rec;
+      Chc.print_linked_formula ~level:`info srk combined_rec;
       (* Star it *)
-      let tr = transition_of_linked_formula combined_rec in
+      let tr = Chc.transition_of_linked_formula combined_rec in
       logf_noendl ~level:`info "    As transition:@.    %a@." K.pp tr;
       let tr_star = K.star tr in 
       logf_noendl ~level:`info "    Starred:@.    %a@." K.pp tr_star;
       let tr_star_rule = 
-        linked_formula_of_transition tr_star combined_rec in
+        Chc.linked_formula_of_transition tr_star combined_rec in
       logf_noendl ~level:`info "    Starred as CHC:@.    ";
-      print_linked_formula ~level:`info srk tr_star_rule;
+      Chc.print_linked_formula ~level:`info srk tr_star_rule;
       (* Use substitution to apply the starred rule onto 
          every other matrix entry corresponding to a rule 
          that has conclusion p *)
       matrix_row_iteri rule_matrix p
         (fun _ hyp nonrec_rule ->
           (* *)
-          let sub_rule = subst_all tr_star_rule nonrec_rule in
+          let sub_rule = Chc.subst_all tr_star_rule nonrec_rule in
           assign_matrix_element rule_matrix p hyp sub_rule);
       remove_matrix_element rule_matrix p p
       (* At this point, p's rules are all non-recursive *)
@@ -1270,13 +1276,13 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
           (* Now, we substitute prule into qrule, 
              creating a new rule with hypothesis r and conclusion q, 
              thus eliminating a use of p. *)
-          let sub_rule = subst_all qrule prule in
+          let sub_rule = Chc.subst_all qrule prule in
           match get_matrix_element_opt rule_matrix q r with
           | None ->
             assign_matrix_element rule_matrix q r sub_rule
           | Some prev_rule ->
             let combined_rule = 
-              disjoin_linked_formulas [prev_rule; sub_rule] in
+              Chc.disjoin_linked_formulas [prev_rule; sub_rule] in
             assign_matrix_element rule_matrix q r combined_rule));
   (* Now, set all the entries in column p to zero *)
   matrix_col_iteri rule_matrix p 
@@ -1341,7 +1347,7 @@ let summarize_nonlinear_scc scc rulemap summaries =
           List.filter
             (fun chc -> let (conc, hyps, phi) = chc in List.length hyps == 0)
             p_chcs in
-        let p_fact = disjoin_linked_formulas p_facts in
+        let p_fact = Chc.disjoin_linked_formulas p_facts in
         let (projection, pre_symbols) = make_chc_projection_and_symbols p_fact in
         let tr_symbols = [] in
           (* List.map (fun sym -> (sym, AuxVarModuleCHC.post_symbol sym)) pre_symbols in *)
@@ -1369,7 +1375,7 @@ let summarize_nonlinear_scc scc rulemap summaries =
             (fun chc -> let (conc, hyps, phi) = chc in List.length hyps != 0)
             p_chcs in
         let p_subbed_rules = subst_summaries p_rules hyp_sum_map in
-        let p_rec_rule = disjoin_linked_formulas p_subbed_rules in
+        let p_rec_rule = Chc.disjoin_linked_formulas p_subbed_rules in
         let (_,_,rec_rule_phi) = p_rec_rule in
         ProcMap.add p rec_rule_phi rec_fmla_map)
       ProcMap.empty
@@ -1488,21 +1494,21 @@ let print_summaries summaries =
   logf ~level:`always "\n** Summaries as formulas **\n";
   BatMap.Int.iter
     (fun pred_num summary_rule ->
-        print_linked_formula ~level:`always srk summary_rule;
+        Chc.print_linked_formula ~level:`always srk summary_rule;
         logf ~level:`always "  ")
     !summaries;
   logf ~level:`always "\n** Summaries as wedges **\n";
   BatMap.Int.iter
     (fun pred_num summary_rule ->
-        print_linked_formula_as_wedge ~level:`always srk summary_rule;
+        Chc.print_linked_formula_as_wedge ~level:`always srk summary_rule;
         logf ~level:`always "  ")
     !summaries
 
 let analyze_ruleset rules query_int = 
   let callgraph = List.fold_left
     (fun graph rule ->
-      let conc_pred_id = conc_pred_id_of_linked_formula rule in
-      let hyp_pred_ids = hyp_pred_ids_of_linked_formula rule in
+      let conc_pred_id = Chc.conc_pred_id_of_linked_formula rule in
+      let hyp_pred_ids = Chc.hyp_pred_ids_of_linked_formula rule in
       List.fold_left
         (fun g p -> CallGraph.add_edge g conc_pred_id p)
         graph
@@ -1512,7 +1518,7 @@ let analyze_ruleset rules query_int =
   in
   let rulemap = List.fold_left
     (fun rulemap rule ->
-      let conc_pred_id = conc_pred_id_of_linked_formula rule in
+      let conc_pred_id = Chc.conc_pred_id_of_linked_formula rule in
       BatMap.Int.add
         conc_pred_id
         (rule::(BatMap.Int.find_default [] conc_pred_id rulemap))
@@ -1542,7 +1548,7 @@ let analyze_smt2 filename =
   List.iter 
     (fun rule -> 
         logf_noendl ~level:`info "Incoming CHC: @.  ";
-        print_linked_formula srk rule) 
+        Chc.print_linked_formula srk rule) 
     rules;
   analyze_ruleset rules query_int
 
