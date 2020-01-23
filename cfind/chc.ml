@@ -311,12 +311,26 @@ module AuxVarModuleCHC = struct
      symbol = Srk.Syntax.mk_symbol srk ~name `TyInt}
 
   let post_symbol =
-    Memo.memo (fun sym ->
-      match Var.of_symbol sym with
-      | Some var ->
-        Srk.Syntax.mk_symbol srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
-      | None -> assert false)
-
+    Memo.memo 
+      (* Original code used by chora *)
+      (*(fun sym ->
+        match Var.of_symbol sym with
+        | Some var ->
+          Srk.Syntax.mk_symbol srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
+        | None -> assert false)*)
+      (* FIXME *)
+      (fun sym ->
+        begin
+        match Var.of_symbol sym with
+        | Some var -> ()
+        | None -> Var.register_var sym
+        end;
+        begin
+        match Var.of_symbol sym with
+        | Some var ->
+          Srk.Syntax.mk_symbol srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
+        | None -> assert false
+        end)
 end
 
 module ProcMap = IntMap
@@ -789,7 +803,6 @@ let linked_formula_has_hyp rule target_hyp_num =
        (running || (pred_num = target_hyp_num)))
     false
     hyps;;
-
 
 let build_linked_formulas srk1 srk2 phi query_pred =
   let rec get_rule vars rules phi = 
