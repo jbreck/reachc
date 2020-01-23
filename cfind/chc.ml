@@ -291,6 +291,67 @@ module K = struct
   (*let project = exists Var.is_global*)
 end
 
+(* ********************************************** *)
+
+module IntMap = BatMap.Int
+module IntSet = BatSet.Int
+
+module AuxVarModuleCHC = struct
+  type val_t = unit
+  type val_sym = {
+      value: unit; 
+      symbol: Srk.Syntax.symbol
+  }
+
+  type srk_ctx_magic = Sctx.t
+  let srk = srk
+
+  let make_aux_variable name = 
+    {value = ();
+     symbol = Srk.Syntax.mk_symbol srk ~name `TyInt}
+
+  let post_symbol =
+    Memo.memo (fun sym ->
+      match Var.of_symbol sym with
+      | Some var ->
+        Srk.Syntax.mk_symbol srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
+      | None -> assert false)
+
+end
+
+module ProcMap = IntMap
+
+let procedure_names_map = ref ProcMap.empty
+
+module ProcModuleCHC = struct
+  module ProcMap = IntMap
+
+  let proc_name_triple_string proc_key = 
+    if ProcMap.mem proc_key !procedure_names_map then 
+      let name = ProcMap.find proc_key !procedure_names_map in
+      Format.sprintf "(%d,\"%s\")" proc_key name
+    else
+      Format.sprintf "(%d,?)" proc_key
+
+  let proc_name_string proc_key = 
+    if ProcMap.mem proc_key !procedure_names_map then 
+      let name = ProcMap.find proc_key !procedure_names_map in
+      Format.sprintf "%s" name
+    else
+      Format.sprintf "<unknown procedure(%d)>" proc_key
+end
+
+module ChoraCHC = ChoraCore.MakeChoraCore(ProcModuleCHC)(AuxVarModuleCHC)
+
+open AuxVarModuleCHC
+open ProcModuleCHC
+
+let make_aux_predicate int_arity name = 
+  Srk.Syntax.mk_symbol srk ~name 
+    (`TyFun (List.init int_arity (fun n -> `TyInt), `TyBool))
+
+(* ********************************************** *)
+
 let is_syntactic_false srk expr = 
   match Syntax.destruct srk expr with
   | `Fls -> true
@@ -1041,14 +1102,32 @@ let print_condensed_graph ?(level=`info) callgraph_sccs =
   logf ~level "SCC list in processing order:";
   List.iter print_scc callgraph_sccs
 
+(* Substitute summaries of lower SCCs into this predicate's rules *)
+let subst_summaries rules summaries =
+  List.map
+    (fun rule ->
+     let (conc, hyps, phi) = rule in
+     List.fold_left 
+       (fun rule_inprog hyp -> 
+          let (pred_num, args) = hyp in
+          if BatMap.Int.mem pred_num summaries then
+            let pred_summary = BatMap.Int.find pred_num summaries in
+            (if linked_formula_has_hyp rule_inprog pred_num then
+              subst_all rule_inprog pred_summary
+            else rule_inprog)
+          else 
+            rule_inprog)
+       rule
+       hyps)
+    rules
+
 let build_rule_list_matrix scc rulemap summaries const_id = 
   let rule_list_matrix = new_empty_matrix () in
   logf ~level:`info "  Finding rules";
   List.iter
     (fun p ->
-      let p_rules = BatMap.Int.find p rulemap in
-      (* Substitute summaries of lower SCCs into this predicate's rules *)
-      let p_rules = 
+      let p_rules = subst_summaries (BatMap.Int.find p rulemap) !summaries in
+      (* let p_rules = 
         List.map
           (fun rule ->
            let (conc, hyps, phi) = rule in
@@ -1064,7 +1143,7 @@ let build_rule_list_matrix scc rulemap summaries const_id =
                   rule_inprog)
              rule
              hyps)
-        p_rules in 
+        p_rules in *)
       List.iter 
         (fun rule ->
            let (conc, hyps, phi) = rule in
@@ -1135,7 +1214,7 @@ let analyze_query_predicate rule_matrix query_int const_id =
         end
     end
 
-let eliminate_predicate rule_matrix query_int const_id p =
+let eliminate_predicate rule_matrix (*query_int*) const_id p =
   (*if p = query_int then () else*)
   logf ~level:`info "   -Eliminating %a" 
     (Syntax.pp_symbol srk) 
@@ -1191,29 +1270,205 @@ let eliminate_predicate rule_matrix query_int const_id p =
     (fun q _ _ -> remove_matrix_element rule_matrix q p)
   (* At this point, p has been eliminated from the system *)
 
-let analyze_scc finished_flag summaries rulemap query_int scc = 
-  if !finished_flag then () else 
-  begin
-    print_scc scc;
-    let const_id = (* (List.hd (List.sort compare scc)) *) -1 in
-    assert (not (List.mem const_id scc));
-    let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
-    match scc with
+let make_chc_projection_and_symbols rule = 
+  let (conc, hyps, _) = rule in
+  let occs = conc::hyps in
+  let arg_list = List.fold_left
+    (fun running_args occ ->
+       let (_, args) = occ in
+       List.append args running_args)
+    []
+    occs in
+  let projection x =
+    List.mem x arg_list in
+  (projection, arg_list)
+
+(* Create a new CHC representing the hypothetical summary of some procedure,
+     given the info_structure that contains the formula (not yet a CHC) for
+     the hypothetical summary and the names of the bounding-function 
+     symbols (B_in1, B_in2, ...), and the CHC of the fact (i.e., base case) 
+     from which that hypothetical sumary was computed. 
+   Accomplishing this is simple.
+   We are given the constraint formula, info_structure.call_abstraction_fmla,
+     and we already have a list of all of the hypothesis and conclusion
+     predicate occurrences in fact_pred_occ, and we only need
+     to add one more: we need to create a new hypothesis predicate
+     occurrence that holds onto all the bounding symbols.  
+   In this function, we create that predicate, create an occurrence of it,
+     attach it to the list of hypothesis predicate occurrences, and combine
+     it with the constraint formula from info_structure to obtain the desired
+     CHC. *)
+let make_hypothetical_summary_chc info_structure fact_pred_occ : 'a linked_formula =
+    let bounding_symbol_list = List.map
+      (fun (sym, corresponding_term) -> sym)
+      info_structure.ChoraCHC.bound_pairs in 
+    let n_bounding_symbols = List.length bounding_symbol_list in
+    let new_pred = make_aux_predicate n_bounding_symbols "AuxGlobalPredicate" in
+    let new_pred_occ = 
+      (Srk.Syntax.int_of_symbol new_pred, bounding_symbol_list) in
+    (fact_pred_occ, [new_pred_occ], info_structure.call_abstraction_fmla)
+
+let make_final_summary_chc summary_fmla fact_pred_occ : 'a linked_formula =
+    (fact_pred_occ, [], summary_fmla)
+
+let handle_nonlinear_scc scc rulemap summaries = 
+  logf ~level:`info "SCC: non-super-linear@.";
+  let subbed_chcs_map = 
+    List.fold_left
+      (fun subbed_chcs_map p ->
+        let p_chcs = subst_summaries (BatMap.Int.find p rulemap) !summaries in
+        ProcMap.add p p_chcs subbed_chcs_map)
+      ProcMap.empty
+      scc in 
+  let (bounds_map, hyp_sum_map, fact_pred_occ_map) = 
+    List.fold_left
+      (fun (bounds_map, hyp_sum_map, fact_pred_occ_map) p ->
+        let p_chcs = ProcMap.find p subbed_chcs_map in
+        let p_facts = 
+          List.filter
+            (fun chc -> let (conc, hyps, phi) = chc in List.length hyps == 0)
+            p_chcs in
+        let p_fact = disjoin_linked_formulas p_facts in
+        let (projection, pre_symbols) = make_chc_projection_and_symbols p_fact in
+        let tr_symbols = [] in
+          (* List.map (fun sym -> (sym, AuxVarModuleCHC.post_symbol sym)) pre_symbols in *)
+        let (fact_pred_occ, fact_hyps, fact_phi) = p_fact in
+        (assert ((List.length fact_hyps) = 0));
+        (* Call into ChoraCore to generalize the fact into a hypothetical summary formula,
+             along with a list of bounding symbols, stored together in bounds_structure *)
+        let bounds_structure = 
+          ChoraCHC.make_hypothetical_summary fact_phi tr_symbols projection in
+        (* Concept: make the hypothetical summary formula into a hypothetical summary
+             CHC by attaching a new ``auxiliary global variable'' predicate for 
+             the predicate's bounding functions. *)
+        let hyp_sum_chc = make_hypothetical_summary_chc bounds_structure fact_pred_occ in
+        (ProcMap.add p bounds_structure bounds_map, 
+         ProcMap.add p hyp_sum_chc hyp_sum_map,
+         ProcMap.add p fact_pred_occ fact_pred_occ_map))
+      (ProcMap.empty, ProcMap.empty, ProcMap.empty)
+      scc in
+  let rec_fmla_map = 
+    List.fold_left
+      (fun rec_fmla_map p ->
+        let p_chcs = ProcMap.find p subbed_chcs_map in
+        let p_rules = 
+          List.filter
+            (fun chc -> let (conc, hyps, phi) = chc in List.length hyps != 0)
+            p_chcs in
+        let p_subbed_rules = subst_summaries p_rules hyp_sum_map in
+        let p_rec_rule = disjoin_linked_formulas p_subbed_rules in
+        let (_,_,rec_rule_phi) = p_rec_rule in
+        ProcMap.add p rec_rule_phi rec_fmla_map)
+      ProcMap.empty
+      scc in
+  let depth_bound_fmla_map = 
+    List.fold_left
+      (fun depth_bound_fmla_map p ->
+        let depth_bound_fmla = Srk.Syntax.mk_true srk in
+        ProcMap.add p depth_bound_fmla depth_bound_fmla_map)
+      ProcMap.empty
+      scc in
+  let height_var = make_aux_variable "H" in 
+  (* When changing this to use dual-height, I need to compute "excepting" *)
+  let height_model = ChoraCHC.RB height_var in
+  let excepting = Srk.Syntax.Symbol.Set.empty in
+  let summary_fmla_list = 
+    ChoraCHC.make_height_based_summaries
+      rec_fmla_map bounds_map depth_bound_fmla_map scc height_model excepting in
+  let summary_chc_list = List.map
+    (fun (p,fmla) -> 
+        let fact_pred_occ = ProcMap.find p fact_pred_occ_map in
+        (p, make_final_summary_chc fmla fact_pred_occ))
+    summary_fmla_list in 
+  List.iter
+    (fun (p,chc) -> summaries := (BatMap.Int.add p chc !summaries)) 
+    summary_chc_list
+
+(* Okay, given that it is non-linear, what do you do? *)
+(* Run over all facts *)
+(* Call:
+   let hs_projection x = 
+     (let symbol_name = Srk.Syntax.show_symbol srk x in 
+     let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
+     if this_name_is_a_param_prime then 
+       ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
+     else
+       ((List.fold_left 
+           (fun found (vpre,vpost) -> found || vpre == x || vpost == x) 
+           false tr_symbols)
+         || 
+         is_var_global x
+       ))
+   let bounds = ChoraCHC.make_hypothetical_summary base_case_fmla tr_symbols hs_projection
+*)
+(* Then, substitute those in *)
+(* Then, call the code that makes the height-based summaries
+  let summary_fmla_list = 
+    ChoraCHC.make_height_based_summaries
+      rec_fmla_map bounds_map depth_bound_formula_map proc_key_list height_model excepting in
+*)
+(* XXX *)
+
+let detect_linear_scc scc rulemap summaries = 
+  List.fold_left (* for p in scc *)
+    (fun is_linear p -> is_linear &&
+      begin
+        let p_rules = BatMap.Int.find p rulemap in
+        List.fold_left (* for p_rule in p_rules *)
+          (fun is_linear_rule rule -> is_linear_rule &&
+             begin
+               let (conc, hyps, phi) = rule in
+               let n_scc_hyps_this_rule = 
+               List.fold_left (* for hyp in hyps *)
+                 (fun n_scc_hyps hyp ->
+                   let (hyp_pred_num, args) = hyp in
+                   if BatMap.Int.mem hyp_pred_num !summaries 
+                   then n_scc_hyps
+                   else (n_scc_hyps + 1))
+                 0
+                 hyps in
+               (n_scc_hyps_this_rule <= 1)
+             end)
+          true
+          p_rules
+      end)
+    true
+    scc
+
+let handle_linear_scc scc rulemap summaries query_int finished_flag = 
+  logf ~level:`info "SCC: linear@.";
+  let const_id = (* (List.hd (List.sort compare scc)) *) -1 in
+  assert (not (List.mem const_id scc));
+  let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
+  match scc with
     | [p] when p = query_int ->
       finished_flag := true;
-      analyze_query_predicate rule_matrix query_int const_id   
+      analyze_query_predicate rule_matrix query_int const_id
     | _ -> 
-      (* Now, eliminate predicates from this SCC one at a time*)
-      logf ~level:`info "  Eliminating predicates";
-      List.iter (eliminate_predicate rule_matrix query_int const_id) scc;
-      (* The remaining matrix entries are summaries; 
-         they have no hypothesis predicate occurrences *)
-      List.iter
-        (fun p ->
-          match get_matrix_element_opt rule_matrix p const_id with
-          | None -> failwith "Missing const_id entry in rule_matrix"
-          | Some rule -> summaries := (BatMap.Int.add p rule !summaries)) 
-        scc
+      begin
+        (* Now, eliminate predicates from this SCC one at a time*)
+        logf ~level:`info "  Eliminating predicates";
+        List.iter (eliminate_predicate rule_matrix (*query_int*) const_id) scc;
+        (* The remaining matrix entries are summaries; 
+           they have no hypothesis predicate occurrences *)
+        List.iter
+          (fun p ->
+            match get_matrix_element_opt rule_matrix p const_id with
+            | None -> failwith "Missing const_id entry in rule_matrix"
+            | Some rule -> summaries := (BatMap.Int.add p rule !summaries)) 
+          scc
+      end
+
+let analyze_scc finished_flag summaries rulemap query_int scc =
+  if !finished_flag then () else
+  begin
+    print_scc scc;
+      (* The main action of these handle_* functions is to compute
+         the appropriate predicate-summaries and add them to the
+         map called summaries *)
+      if detect_linear_scc scc rulemap summaries 
+      then handle_linear_scc scc rulemap summaries query_int finished_flag
+      else handle_nonlinear_scc scc rulemap summaries
   end
 
 let print_summaries summaries = 
