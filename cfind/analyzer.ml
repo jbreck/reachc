@@ -436,16 +436,18 @@ let logf_noendl ?(level=`info) =
 
 module VarSet = BatSet.Int
 
+(*type atom_arg = Srk.Syntax.Symbol.t*)
+type atom_arg = Sctx.t Srk.Syntax.Term.t
 type pred_num_t = int
-type var_pos_list = Srk.Syntax.Symbol.t list
+(*type atom_arg_list = atom_arg list*)
 type atom_record = {
     pred_num:pred_num_t;
-    args:Srk.Syntax.Symbol.t list
+    args:atom_arg list
 }
 type atom_t = atom_record
 
 
-(*type atom_t = pred_num_t * var_pos_list*)
+(*type atom_t = pred_num_t * atom_arg list*)
 type (*'a*)  chc_tuple = atom_t *
                          (atom_t list) *
                          Sctx.t Srk.Syntax.Formula.t
@@ -457,15 +459,16 @@ type chc_record = {
     fmla:Sctx.t Srk.Syntax.Formula.t
 }
 
-type linked_formula = chc_tuple
+type linked_formula = chc_record
 
 module Chc = struct
 
+  (*
   module Atom = struct
     (* atom, i.e., predicate occurrence *)
     type t = atom_t
     (*type atom_tuple = atom_t*)
-    type atom_tuple = pred_num_t * var_pos_list
+    type atom_tuple = pred_num_t * atom_arg list
 
     (*
     (* Using atom_tuple *)
@@ -473,13 +476,13 @@ module Chc = struct
       let (pred_num,args) = atom in
       {pred_num=pred_num;args=args}
 
-    let to_tuple (atom:atom_tuple) : (pred_num_t * var_pos_list) =
+    let to_tuple (atom:atom_tuple) : (pred_num_t * atom_arg list) =
       atom
 
-    let of_tuple ((pred:pred_num_t), (args:var_pos_list)) : atom_t = 
+    let of_tuple ((pred:pred_num_t), (args:atom_arg list)) : atom_t = 
       (pred, args)
 
-    let mk (pred_num:pred_num_t) (args:var_pos_list) : atom_t = 
+    let mk (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       (pred_num, args)
 
     *)
@@ -489,13 +492,13 @@ module Chc = struct
     let to_rec (atom:atom_t) : atom_record =
       atom
 
-    let to_tuple (atom:atom_record) : (pred_num_t * var_pos_list) =
+    let to_tuple (atom:atom_record) : (pred_num_t * atom_arg list) =
       (atom.pred_num,atom.args)
 
-    let of_tuple ((pred_num:pred_num_t), (args:var_pos_list)) : atom_t = 
+    let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
       {pred_num=pred_num;args=args}
 
-    let mk (pred_num:pred_num_t) (args:var_pos_list) : atom_t = 
+    let mk (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       {pred_num=pred_num;args=args}
 
   end
@@ -881,17 +884,56 @@ module Chc = struct
 
     (* ZZZ *)
 
+
+*)
+    (* End big comment-out *)
+ 
+  module Atom = struct
+    (* atom, i.e., predicate occurrence *)
+    type t = atom_t
+    (*type atom_tuple = atom_t*)
+    type atom_tuple = pred_num_t * atom_arg list
+
+    (* Using atom_record *)
+    let to_rec (atom:atom_t) : atom_record =
+      atom
+
+    let to_tuple (atom:atom_record) : (pred_num_t * atom_arg list) =
+      (atom.pred_num,atom.args)
+
+    let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
+      {pred_num=pred_num;args=args}
+
+    let mk (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
+      {pred_num=pred_num;args=args}
+
+  end
+
+  type t = linked_formula
+
+  (*
+  (* Using chc_tuple *)
+  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : linked_formula = 
+    (conc,hyps,fmla)
+
+  let to_tuple (chc:linked_formula) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
+    chc (* (conc,hyps,fmla) *)
+  *)
+
+  (* Using chc_record *)
+  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : linked_formula = 
+    {conc=conc;hyps=hyps;fmla=fmla}
+
+  let mk (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : linked_formula = 
+    {conc=conc;hyps=hyps;fmla=fmla}
+
+  let to_tuple (chc:linked_formula) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
+    (chc.conc,chc.hyps,chc.fmla) (* (conc,hyps,fmla) *)
+
   let equate_two_args arg1 arg2 =
-    (* Symbol version *)
-    let term1 = Srk.Syntax.mk_const srk arg1 in
-    let term2 = Srk.Syntax.mk_const srk arg2 in
-    Syntax.mk_eq srk term1 term2
-    (*
     (* Term version *)
     Syntax.mk_eq srk arg1 arg2
-    *)
 
-  
   (** Replace all skolem constants appearing in the CHC
    *    with fresh skolem constants *)
   let fresh_skolem_all chc =
@@ -906,20 +948,94 @@ module Chc = struct
     let freshen_expr expr =
       Syntax.substitute_const srk freshen_symbol_to_const expr in
     let freshen_atom atom = 
-      (* Symbol version *)
-      let new_args = List.map freshen_symbol_to_symbol atom.args in 
-      (*
       (* Term version *)
       let new_args = List.map freshen_expr atom.args in 
-      *)
-      Atom.of_tuple (atom.pred_num, new_args) in
-    let (conc_pred, hyp_preds, phi) = to_tuple chc in
-    let new_conc_pred = freshen_atom conc_pred in
-    let new_hyp_preds = List.map freshen_atom hyp_preds in
-    let new_phi = freshen_expr phi in
-    (new_conc_pred, new_hyp_preds, new_phi)
+      Atom.mk atom.pred_num new_args in
+    let new_conc_atom = freshen_atom chc.conc in
+    let new_hyp_atoms = List.map freshen_atom chc.hyps in
+    let new_phi = freshen_expr chc.fmla in
+    of_tuple (new_conc_atom, new_hyp_atoms, new_phi)
+
+  let freshen_and_equate_args chc tgt_conc_atom tgt_hyp_atom_list = 
+    let chc = fresh_skolem_all chc in
+    let old_atoms = chc.conc::chc.hyps in
+    let new_atoms = tgt_conc_atom::tgt_hyp_atom_list in
+    let equations = List.concat (List.map2 
+      (fun old_atom new_atom_option ->
+          match new_atom_option with
+          | None -> []
+          | Some new_atom ->
+             begin
+             assert (old_atom.pred_num = new_atom.pred_num);
+             List.map2 
+                (fun old_arg new_arg -> Syntax.mk_eq srk old_arg new_arg)
+                old_atom.args
+                new_atom.args
+             end)
+      old_atoms
+      new_atoms) in
+    let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
+    mk chc.conc chc.hyps new_phi
+    
+  let subst_all outer_chc inner_chc = 
+    let outer_chc = fresh_skolem_all outer_chc in
+    let (outer_hyps_matching, outer_hyps_non_matching) = 
+      List.partition
+        (fun atom -> (atom.pred_num = inner_chc.conc.pred_num))
+        outer_chc.hyps
+      in
+    (if List.length outer_hyps_matching = 0 
+    then failwith "Mismatched subst_all call"
+    else ());
+    let (new_hyps, new_phis) = 
+      List.fold_left
+        (fun (hyps, phis) outer_hyp -> 
+          assert (outer_hyp.pred_num = inner_chc.conc.pred_num);
+          let tgt_conc_atom = Some outer_hyp in
+          let tgt_hyp_atom_list = List.map (fun hyp -> None) inner_chc.hyps in
+          let new_inner_chc = 
+              freshen_and_equate_args 
+                inner_chc tgt_conc_atom tgt_hyp_atom_list in
+          (new_inner_chc.hyps @ hyps, new_inner_chc.fmla::phis))
+        ([],[])
+        outer_hyps_matching
+      in
+    let phi = Syntax.mk_and srk (outer_chc.fmla::new_phis) in
+    let hyps = outer_hyps_non_matching @ new_hyps in
+    mk outer_chc.conc hyps phi
+
+  let disjoin chcs =
+    match chcs with
+    | [] -> failwith "Empty chc list in Chc.disjoin"
+    | [chc1] -> chc1
+    | chc1::old_chcs ->
+      let chc1 = fresh_skolem_all chc1 in
+      let new_phis = 
+        List.map
+          (fun old_chc ->
+             let tgt_conc_atom = Some chc1.conc in
+             let tgt_hyp_atom_list = List.map (fun hyp -> Some hyp) chc1.hyps in
+             let new_chc = 
+               freshen_and_equate_args
+                 old_chc tgt_conc_atom tgt_hyp_atom_list in
+             new_chc.fmla) 
+          old_chcs in
+      let new_phi = Syntax.mk_or srk (chc1.fmla::new_phis) in
+      mk chc1.conc chc1.hyps new_phi
+
+  let subst_equating_globally chc subst_map = 
+    let sub_policy atom =
+        if IntMap.mem atom.pred_num subst_map 
+        then Some (IntMap.find atom.pred_num subst_map)
+        else None in
+    freshen_and_equate_args
+      chc
+      (sub_policy chc.conc)
+      (List.map sub_policy chc.hyps) 
 
 end
+
+(*
 
 let linked_formula_has_hyp rule target_hyp_num = 
   let (conc, hyps, phi) = rule in
@@ -1714,3 +1830,4 @@ let _ =
      " Print summaries");
   ();;
 
+*)
