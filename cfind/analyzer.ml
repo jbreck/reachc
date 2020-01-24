@@ -340,19 +340,19 @@ let procedure_names_map = ref ProcMap.empty
 module ProcModuleCHC = struct
   module ProcMap = IntMap
 
-  let proc_name_triple_string proc_key = 
+  let proc_name_string proc_key = 
     if ProcMap.mem proc_key !procedure_names_map then 
       let name = ProcMap.find proc_key !procedure_names_map in
       Format.sprintf "(%d,\"%s\")" proc_key name
     else
       Format.sprintf "(%d,?)" proc_key
 
-  let proc_name_string proc_key = 
+  (*let proc_name_string proc_key = 
     if ProcMap.mem proc_key !procedure_names_map then 
       let name = ProcMap.find proc_key !procedure_names_map in
       Format.sprintf "%s" name
     else
-      Format.sprintf "<unknown procedure(%d)>" proc_key
+      Format.sprintf "<unknown procedure(%d)>" proc_key*)
 end
 
 module ChoraCHC = ChoraCore.MakeChoraCore(ProcModuleCHC)(AuxVarModuleCHC)
@@ -425,6 +425,15 @@ let find_predicates srk expr =
   in
   Syntax.Formula.eval srk alg expr
 
+
+let logf_noendl ?(level=`info) =
+  let sf = Format.std_formatter in 
+  if (Log.level_leq (!Log.verbosity_level) level ||
+      Log.level_leq (!my_verbosity_level) level)
+  then Format.fprintf sf
+  else Format.ifprintf sf
+
+
 module VarSet = BatSet.Int
 
 type pred_num_t = int
@@ -437,17 +446,18 @@ type predicate_occurrence = pred_occ_record
 
 
 (*type predicate_occurrence = pred_num_t * var_pos_list*)
-type (*'a*) linked_formula = predicate_occurrence *
+type (*'a*)  chc_tuple = predicate_occurrence *
                          (predicate_occurrence list) *
                          Sctx.t Srk.Syntax.Formula.t
                          (*'a Srk.Syntax.Formula.t*)
 
-let logf_noendl ?(level=`info) =
-  let sf = Format.std_formatter in 
-  if (Log.level_leq (!Log.verbosity_level) level ||
-      Log.level_leq (!my_verbosity_level) level)
-  then Format.fprintf sf
-  else Format.ifprintf sf
+type chc_record = {
+    conc:predicate_occurrence;
+    hyps:predicate_occurrence list;
+    fmla:Sctx.t Srk.Syntax.Formula.t
+}
+
+type linked_formula = chc_tuple
 
 module Chc = struct
 
@@ -491,6 +501,13 @@ module Chc = struct
   end
 
   type t = linked_formula
+
+  (* Using chc_tuple *)
+  let of_tuple ((conc:predicate_occurrence),(hyps:predicate_occurrence list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : linked_formula = 
+    (conc,hyps,fmla)
+
+  let to_tuple (chc:linked_formula) : predicate_occurrence * predicate_occurrence list * (Sctx.t Srk.Syntax.Formula.t) = 
+    chc (* (conc,hyps,fmla) *)
 
   (* YYY *)
 
@@ -1408,14 +1425,14 @@ let summarize_nonlinear_scc scc rulemap summaries =
             p_chcs in
         let p_fact = Chc.disjoin_linked_formulas p_facts in
         let (projection, pre_symbols) = make_chc_projection_and_symbols p_fact in
-        let tr_symbols = [] in
+        (*let tr_symbols = [] in*)
           (* List.map (fun sym -> (sym, AuxVarModuleCHC.post_symbol sym)) pre_symbols in *)
         let (fact_pred_occ, fact_hyps, fact_phi) = p_fact in
         (assert ((List.length fact_hyps) = 0));
         (* Call into ChoraCore to generalize the fact into a hypothetical summary formula,
              along with a list of bounding symbols, stored together in bounds_structure *)
         let bounds_structure = 
-          ChoraCHC.make_hypothetical_summary fact_phi tr_symbols projection in
+          ChoraCHC.make_hypothetical_summary fact_phi projection in
         (* Concept: make the hypothetical summary formula into a hypothetical summary
              CHC by attaching a new ``auxiliary global variable'' predicate for 
              the predicate's bounding functions. *)
