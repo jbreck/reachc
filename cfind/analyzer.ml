@@ -907,6 +907,20 @@ module Chc = struct
     let mk (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       {pred_num=pred_num;args=args}
 
+    let print ?(level=`info) srk atom = 
+      (*let (pred_num, var_symbols) = Atom.to_tuple atom in *)
+      let n_args = List.length atom.args in 
+      logf_noendl ~level "%s(" 
+        (Syntax.show_symbol srk (Syntax.symbol_of_int atom.pred_num));
+      List.iteri 
+        (fun i arg ->
+          (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
+          (*logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;*)
+          logf_noendl ~level "%a" (Syntax.Term.pp srk) arg;
+          if i != n_args - 1 then logf_noendl ~level ",")
+        atom.args;
+      logf_noendl ~level ")"
+
   end
 
   type t = linked_formula
@@ -930,9 +944,14 @@ module Chc = struct
   let to_tuple (chc:linked_formula) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
     (chc.conc,chc.hyps,chc.fmla) (* (conc,hyps,fmla) *)
 
-  let equate_two_args arg1 arg2 =
-    (* Term version *)
-    Syntax.mk_eq srk arg1 arg2
+  (*let equate_two_args arg1 arg2 = Syntax.mk_eq srk arg1 arg2*)
+  
+  let linked_formula_has_hyp chc target_hyp_num = 
+    List.fold_left 
+      (fun running hyp -> 
+         (running || (hyp.pred_num = target_hyp_num)))
+      false
+      chc.hyps
 
   (** Replace all skolem constants appearing in the CHC
    *    with fresh skolem constants *)
@@ -1031,20 +1050,85 @@ module Chc = struct
     freshen_and_equate_args
       chc
       (sub_policy chc.conc)
-      (List.map sub_policy chc.hyps) 
+      (List.map sub_policy chc.hyps)
+
+  let fresh_symbols_for_args chc =
+    let new_sym atom arg_num = 
+        let name = 
+          (name_of_symbol srk (Syntax.symbol_of_int atom.pred_num)) 
+          ^ "_arg" ^ (string_of_int arg_num) in
+        Syntax.mk_symbol srk ~name `TyInt in
+    let atom_with_new_syms atom = 
+        let new_args = List.mapi
+          (fun arg_num arg ->
+              let sym = new_sym atom arg_num in
+              Syntax.mk_const srk sym)
+          atom.args in
+        Atom.mk atom.pred_num new_args in
+    let tgt_conc = Some (atom_with_new_syms chc.conc) in
+    let tgt_hyps = List.map
+      (fun hyp -> Some (atom_with_new_syms hyp))
+      chc.hyps in
+    freshen_and_equate_args chc tgt_conc tgt_hyps
+
+  let fresh_symbols_for_term_args chc =
+    let new_sym atom arg_num = 
+        let arg = List.nth atom.args arg_num in 
+        match Syntax.destruct srk arg with
+        | `Var (v, `TyInt) -> (Syntax.symbol_of_int v)
+        | _ -> (* predicate argument term that isn't a var *)
+          let name = 
+            (name_of_symbol srk (Syntax.symbol_of_int atom.pred_num)) 
+            ^ "_arg" ^ (string_of_int arg_num) in
+          Syntax.mk_symbol srk ~name `TyInt in
+    let atom_with_new_syms atom = 
+        let new_args = List.mapi
+          (fun arg_num arg ->
+              let sym = new_sym atom arg_num in
+              Syntax.mk_const srk sym)
+          atom.args in
+        Atom.mk atom.pred_num new_args in
+    let tgt_conc = Some (atom_with_new_syms chc.conc) in
+    let tgt_hyps = List.map
+      (fun hyp -> Some (atom_with_new_syms hyp))
+      chc.hyps in
+    freshen_and_equate_args chc tgt_conc tgt_hyps
+
+  let print ?(level=`info) srk rule = 
+    let (conc_pred, hyp_preds, phi) = rule in
+    logf_noendl ~level "{ @[";
+    List.iter 
+      (fun pred -> Atom.print srk pred; logf_noendl ~level ";@ ")
+      hyp_preds;
+    logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) phi;
+    Atom.print ~level srk conc_pred;
+    logf_noendl ~level "@] }@."
+  
+  let print_as_wedge ?(level=`info) srk chc = 
+    (*let (conc_pred, hyp_preds, phi) = rule in*)
+    let chc = fresh_symbols_for_term_args chc in 
+    logf_noendl ~level "{ @[";
+    List.iter 
+      (fun atom -> Atom.print srk atom; logf_noendl ~level ";@ ")
+      chc.hyps;
+    let all_preds = chc.conc::chc.hyps in 
+    let all_pred_args =
+      List.concat
+        (List.map 
+          (fun atom -> 
+            List.map 
+              (fun arg ->
+                match Syntax.destruct srk arg with
+                | `Var (v, `TyInt) -> Syntax.symbol_of_int v
+                | _ -> failwith "fresh_symbols_for_args did not do its job")
+                atom.args) all_preds) in
+    let exists = (fun sym -> List.mem sym all_pred_args) in 
+    let wedge = Wedge.abstract ~exists srk chc.fmla in
+    logf_noendl ~level "%a@ -> " Wedge.pp wedge;
+    Atom.print ~level srk chc.conc;
+    logf_noendl ~level "@] }@."
 
 end
-
-(*
-
-let linked_formula_has_hyp rule target_hyp_num = 
-  let (conc, hyps, phi) = rule in
-  List.fold_left 
-    (fun running hyp -> 
-       (*let (pred_num, args) = Chc.Atom.to_tuple hyp in*)
-       (running || (hyp.pred_num = target_hyp_num)))
-    false
-    hyps;;
 
 let build_linked_formulas srk1 srk2 phi query_pred =
   let rec get_rule vars rules phi = 
@@ -1178,7 +1262,8 @@ let build_linked_formulas srk1 srk2 phi query_pred =
                 end
               in
             let argsymbols = accum_arg_info args [] in
-            let atom = Chc.Atom.of_tuple (fnumber, (List.rev argsymbols)) in
+            let argterms = List.map (fun sym -> Syntax.mk_const srk2 sym) argsymbols in
+            let atom = Chc.Atom.of_tuple (fnumber, (List.rev argterms)) in
             mut_predicates := atom :: !mut_predicates;
             Syntax.mk_true srk2
           (* Recursive nodes: bool from something *)
@@ -1301,7 +1386,8 @@ let build_linked_formulas srk1 srk2 phi query_pred =
        bools in
     let phi = Syntax.mk_and srk2 (hyp_sub::(eqs @ bool_constraints)) in
     let new_rule = (conc_atom, hyp_preds, phi) in 
-    (Chc.make_args_unique new_rule)
+    (*(Chc.make_args_unique new_rule)*)
+    new_rule
     (* *)
   in
   List.map linked_formula_of_rule rules
@@ -1358,23 +1444,24 @@ let print_condensed_graph ?(level=`info) callgraph_sccs =
   List.iter print_scc callgraph_sccs
 
 (* Substitute summaries of lower SCCs into this predicate's rules *)
-let subst_summaries rules summaries =
+let subst_summaries chcs summaries =
+  (* FIXME use declared variable names from somewhere? *)
   List.map
-    (fun rule ->
-     let (conc, hyps, phi) = rule in
+    (fun chc ->
+     (*let (conc, hyps, phi) = rule in*)
      List.fold_left 
        (fun rule_inprog hyp -> 
           (*let (pred_num, args) = Chc.Atom.to_tuple hyp in*)
           if BatMap.Int.mem hyp.pred_num summaries then
             let pred_summary = BatMap.Int.find hyp.pred_num summaries in
-            (if linked_formula_has_hyp rule_inprog hyp.pred_num then
+            (if Chc.linked_formula_has_hyp rule_inprog hyp.pred_num then
               Chc.subst_all rule_inprog pred_summary
             else rule_inprog)
           else 
             rule_inprog)
-       rule
-       hyps)
-    rules
+       chc
+       chc.hyps)
+    chcs
 
 let build_rule_list_matrix scc rulemap summaries const_id = 
   let rule_list_matrix = new_empty_matrix () in
@@ -1382,27 +1469,10 @@ let build_rule_list_matrix scc rulemap summaries const_id =
   List.iter
     (fun p ->
       let p_rules = subst_summaries (BatMap.Int.find p rulemap) !summaries in
-      (* let p_rules = 
-        List.map
-          (fun rule ->
-           let (conc, hyps, phi) = rule in
-           List.fold_left 
-             (fun rule_inprog hyp -> 
-                let (pred_num, args) = hyp in
-                if BatMap.Int.mem pred_num !summaries then
-                  let pred_summary = BatMap.Int.find pred_num !summaries in
-                  (if linked_formula_has_hyp rule_inprog pred_num then
-                    subst_all rule_inprog pred_summary
-                  else rule_inprog)
-                else 
-                  rule_inprog)
-             rule
-             hyps)
-        p_rules in *)
       List.iter 
         (fun rule ->
-           let (conc, hyps, phi) = rule in
-           match hyps with
+           (*let (conc, hyps, phi) = rule in*)
+           match rule.hyps with
            | [hyp] ->
              (*let (hyp_pred_num, args) = Chc.Atom.to_tuple hyp in*)
              modify_def_matrix_element 
@@ -1435,10 +1505,10 @@ let build_rule_matrix scc rulemap summaries const_id =
           List.iter
             (fun r ->
             Format.printf "    - A rule to disjoin: ";
-            print_linked_formula srk r;
+            Chc.print srk r;
             Format.printf "@.")
           rules;*)
-          let combined_rule = Chc.disjoin_linked_formulas rules in
+          let combined_rule = Chc.disjoin rules in
           assign_matrix_element rule_matrix p colid combined_rule)
     ) scc;
   rule_matrix  
@@ -1448,7 +1518,7 @@ let analyze_query_predicate rule_matrix query_int const_id =
   | None -> failwith "Missing final CHC"
   | Some final_rule -> 
     logf_noendl ~level:`info "Final CHC: @.  ";
-    Chc.print_linked_formula ~level:`info srk final_rule;
+    Chc.print ~level:`info srk final_rule;
     logf ~level:`info "";
     let (conc, hyps, final_phi) = final_rule in
     begin
@@ -1469,6 +1539,8 @@ let analyze_query_predicate rule_matrix query_int const_id =
         end
     end
 
+(*
+
 let eliminate_predicate rule_matrix (*query_int*) const_id p =
   (*if p = query_int then () else*)
   logf ~level:`info "   -Eliminating %a" 
@@ -1480,7 +1552,7 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
       (* Obtain the direct-recursion entry from the matrix *)
       let combined_rec = get_matrix_element rule_matrix p p in
       logf_noendl ~level:`info "    Combined recursive CHC:@.    ";
-      Chc.print_linked_formula ~level:`info srk combined_rec;
+      Chc.print ~level:`info srk combined_rec;
       (* Star it *)
       let tr = Chc.transition_of_linked_formula combined_rec in
       logf_noendl ~level:`info "    As transition:@.    %a@." K.pp tr;
@@ -1489,7 +1561,7 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
       let tr_star_rule = 
         Chc.linked_formula_of_transition tr_star combined_rec in
       logf_noendl ~level:`info "    Starred as CHC:@.    ";
-      Chc.print_linked_formula ~level:`info srk tr_star_rule;
+      Chc.print ~level:`info srk tr_star_rule;
       (* Use substitution to apply the starred rule onto 
          every other matrix entry corresponding to a rule 
          that has conclusion p *)
@@ -1730,13 +1802,13 @@ let print_summaries summaries =
   logf ~level:`always "\n** Summaries as formulas **\n";
   BatMap.Int.iter
     (fun pred_num summary_rule ->
-        Chc.print_linked_formula ~level:`always srk summary_rule;
+        Chc.print ~level:`always srk summary_rule;
         logf ~level:`always "  ")
     !summaries;
   logf ~level:`always "\n** Summaries as wedges **\n";
   BatMap.Int.iter
     (fun pred_num summary_rule ->
-        Chc.print_linked_formula_as_wedge ~level:`always srk summary_rule;
+        Chc.print_as_wedge ~level:`always srk summary_rule;
         logf ~level:`always "  ")
     !summaries
 
@@ -1784,7 +1856,7 @@ let analyze_smt2 filename =
   List.iter 
     (fun rule -> 
         logf_noendl ~level:`info "Incoming CHC: @.  ";
-        Chc.print_linked_formula srk rule) 
+        Chc.print srk rule) 
     rules;
   analyze_ruleset rules query_int
 
