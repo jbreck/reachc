@@ -876,34 +876,48 @@ module Chc = struct
     (outer_conc, hyps, phi)
 
 
-  (*
+  
   (* New CHC routines *)
 
     (* ZZZ *)
 
-  (** Replace all skolem constants appearing in chc
+  let equate_two_args arg1 arg2 =
+    (* Symbol version *)
+    let term1 = Srk.Syntax.mk_const srk arg1 in
+    let term2 = Srk.Syntax.mk_const srk arg2 in
+    Syntax.mk_eq srk term1 term2
+    (*
+    (* Term version *)
+    Syntax.mk_eq srk arg1 arg2
+    *)
+
+  
+  (** Replace all skolem constants appearing in the CHC
    *    with fresh skolem constants *)
   let fresh_skolem_all chc =
-    let fresh_skolem =
+    let freshen_symbol_to_symbol =
       Memo.memo 
         (fun sym ->
           let name = name_of_symbol srk sym in
           let typ = Syntax.typ_symbol srk sym in
           Syntax.mk_symbol srk ~name typ) in
-    let substitute_fresh term =
-      Syntax.substitute_const srk fresh_skolem term in
+    let freshen_symbol_to_const sym =
+      Syntax.mk_const srk (freshen_symbol_to_symbol sym) in
+    let freshen_expr expr =
+      Syntax.substitute_const srk freshen_symbol_to_const expr in
     let freshen_atom atom = 
-      (*let (pred_num, args) = Atom.to_tuple atom in*)
-      let new_args = List.map map_symbol atom.args in 
+      (* Symbol version *)
+      let new_args = List.map freshen_symbol_to_symbol atom.args in 
+      (*
+      (* Term version *)
+      let new_args = List.map freshen_expr atom.args in 
+      *)
       Atom.of_tuple (atom.pred_num, new_args) in
-    let (conc_pred, hyp_preds, phi) = rule in
+    let (conc_pred, hyp_preds, phi) = to_tuple chc in
     let new_conc_pred = freshen_atom conc_pred in
     let new_hyp_preds = List.map freshen_atom hyp_preds in
-    let map_symbol_const sym = 
-      Syntax.mk_const srk (map_symbol sym) in
-    let new_phi = Syntax.substitute_const srk map_symbol_const phi in
+    let new_phi = freshen_expr phi in
     (new_conc_pred, new_hyp_preds, new_phi)
-  *)
 
 end
 
