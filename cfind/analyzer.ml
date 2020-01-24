@@ -440,7 +440,7 @@ type pred_num_t = int
 type var_pos_list = Srk.Syntax.Symbol.t list
 type pred_occ_record = {
     pred_num:pred_num_t;
-    vars:Srk.Syntax.Symbol.t list
+    args:Srk.Syntax.Symbol.t list
 }
 type atom_t = pred_occ_record
 
@@ -470,17 +470,17 @@ module Chc = struct
     (*
     (* Using pred_occ_tuple *)
     let to_rec (pred_occ:pred_occ_tuple) : pred_occ_record =
-      let (pred_num,vars) = pred_occ in
-      {pred_num=pred_num;vars=vars}
+      let (pred_num,args) = pred_occ in
+      {pred_num=pred_num;args=args}
 
     let to_tuple (pred_occ:pred_occ_tuple) : (pred_num_t * var_pos_list) =
       pred_occ
 
-    let of_tuple ((pred:pred_num_t), (vars:var_pos_list)) : atom_t = 
-      (pred, vars)
+    let of_tuple ((pred:pred_num_t), (args:var_pos_list)) : atom_t = 
+      (pred, args)
 
-    let mk (pred_num:pred_num_t) (vars:var_pos_list) : atom_t = 
-      (pred_num, vars)
+    let mk (pred_num:pred_num_t) (args:var_pos_list) : atom_t = 
+      (pred_num, args)
 
     *)
 
@@ -490,13 +490,13 @@ module Chc = struct
       pred_occ
 
     let to_tuple (pred_occ:pred_occ_record) : (pred_num_t * var_pos_list) =
-      (pred_occ.pred_num,pred_occ.vars)
+      (pred_occ.pred_num,pred_occ.args)
 
-    let of_tuple ((pred_num:pred_num_t), (vars:var_pos_list)) : atom_t = 
-      {pred_num=pred_num;vars=vars}
+    let of_tuple ((pred_num:pred_num_t), (args:var_pos_list)) : atom_t = 
+      {pred_num=pred_num;args=args}
 
-    let mk (pred_num:pred_num_t) (vars:var_pos_list) : atom_t = 
-      {pred_num=pred_num;vars=vars}
+    let mk (pred_num:pred_num_t) (args:var_pos_list) : atom_t = 
+      {pred_num=pred_num;args=args}
 
   end
 
@@ -513,15 +513,15 @@ module Chc = struct
 
   let print_pred_occ ?(level=`info) srk pred_occ = 
     (*let (pred_num, var_symbols) = Atom.to_tuple pred_occ in *)
-    let n_vars = List.length pred_occ.vars in 
+    let n_args = List.length pred_occ.args in 
     logf_noendl ~level "%s(" 
       (Syntax.show_symbol srk (Syntax.symbol_of_int pred_occ.pred_num));
     List.iteri 
       (fun i sym ->
         (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
         logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;
-        if i != n_vars - 1 then logf_noendl ~level ",")
-      pred_occ.vars;
+        if i != n_args - 1 then logf_noendl ~level ",")
+      pred_occ.args;
     logf_noendl ~level ")"
   
   let print_linked_formula ?(level=`info) srk rule = 
@@ -541,14 +541,14 @@ module Chc = struct
       (fun pred -> print_pred_occ srk pred; logf_noendl ~level ";@ ")
       hyp_preds;
     let all_preds = conc_pred::hyp_preds in 
-    let all_pred_vars =
+    let all_pred_args =
       List.concat
         (List.map 
           (fun occ -> 
-            (*let (pred_num,vars) = Atom.to_tuple occ in 
-            vars*)
-            occ.vars) all_preds) in
-    let exists = (fun sym -> List.mem sym all_pred_vars) in 
+            (*let (pred_num,args) = Atom.to_tuple occ in 
+            args*)
+            occ.args) all_preds) in
+    let exists = (fun sym -> List.mem sym all_pred_args) in 
     let wedge = Wedge.abstract ~exists srk phi in
     logf_noendl ~level "%a@ -> " Wedge.pp wedge;
     print_pred_occ ~level srk conc_pred;
@@ -560,28 +560,28 @@ module Chc = struct
   
   let conc_pred_id_of_linked_formula rule = 
       let (conc_pred, hyp_preds, phi) = rule in
-      (*let (pred_num, vars) = Atom.to_tuple conc_pred in*)
+      (*let (pred_num, args) = Atom.to_tuple conc_pred in*)
       conc_pred.pred_num
   
   let hyp_pred_ids_of_linked_formula rule = 
       let (conc_pred, hyp_preds, phi) = rule in
       List.map 
         (fun pred_occ ->
-          (*let (pred_num, vars) = Atom.to_tuple pred_occ in
+          (*let (pred_num, args) = Atom.to_tuple pred_occ in
           pred_num*)
           pred_occ.pred_num)
         hyp_preds
 
   let transition_of_linked_formula rule = 
       let (conc_pred, hyp_preds, phi) = rule in
-      (*let (conc_pred_num, conc_vars) = Atom.to_tuple conc_pred in*)
+      (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
       assert (List.length hyp_preds = 1);
-      (*let (hyp_pred_num, hyp_vars) = Atom.to_tuple (List.hd hyp_preds) in*)
+      (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
       let hyp_pred = List.hd hyp_preds in
       assert (hyp_pred.pred_num = conc_pred.pred_num);
       Var.reset_tables;
-      List.iter (fun sym -> Var.register_var sym) hyp_pred.vars;
-      (* conc_vars and hyp_vars are lists of symbols *)
+      List.iter (fun sym -> Var.register_var sym) hyp_pred.args;
+      (* conc_args and hyp_args are lists of symbols *)
       let transform = 
         List.map2 
           (fun pre post -> 
@@ -592,8 +592,8 @@ module Chc = struct
                   "Unregistered variable in transition_of_linked_formula"),
               (* post-state as term *)
               Syntax.mk_const srk post))
-          hyp_pred.vars
-          conc_pred.vars
+          hyp_pred.args
+          conc_pred.args
         in
       K.construct phi transform
 
@@ -603,10 +603,10 @@ module Chc = struct
      as model_rule.  *)
   let identity_linked_formula model_rule =
     let (conc_pred, hyp_preds, _) = model_rule in
-    (*let (conc_pred_num, conc_vars) = Atom.to_tuple conc_pred in*)
+    (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
     assert (List.length hyp_preds = 1);
     let hyp_pred = List.hd hyp_preds in
-    (*let (hyp_pred_num, hyp_vars) = Atom.to_tuple (List.hd hyp_preds) in*)
+    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
     assert (hyp_pred.pred_num = conc_pred.pred_num);
     let eq_atoms = List.fold_left2
       (fun atoms hyp_var conc_var ->
@@ -615,8 +615,8 @@ module Chc = struct
             (Syntax.mk_const srk conc_var) 
           in atom::atoms)
       [] 
-      hyp_pred.vars
-      conc_pred.vars
+      hyp_pred.args
+      conc_pred.args
     in
     let phi = Syntax.mk_and srk eq_atoms in
     (conc_pred, hyp_preds, phi)
@@ -655,7 +655,7 @@ module Chc = struct
     (*let (conc_pred_num, _) = Atom.to_tuple conc_pred in*)
     assert (List.length hyp_preds = 1);
     let hyp_pred = List.hd hyp_preds in
-    (*let (hyp_pred_num, hyp_vars) = Atom.to_tuple (List.hd hyp_preds) in*)
+    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
     assert (hyp_pred.pred_num = conc_pred.pred_num);
     let new_args = 
       List.map 
@@ -667,18 +667,18 @@ module Chc = struct
              | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
                      failwith "Could not find symbol in linked_formula_of_transition"
            in go tr_symbols)
-        hyp_pred.vars in
+        hyp_pred.args in
     let new_conc_pred = Atom.of_tuple (conc_pred.pred_num, new_args) in 
     (new_conc_pred, hyp_preds, body)
 
   (*
   let subst_in_pred pred var_to var_from = 
-    let (pred_num, pred_vars) = pred in
-    let new_vars = 
+    let (pred_num, pred_args) = pred in
+    let new_args = 
       List.map
         (fun old_var -> if old_var = var_from then var_to else old_var)
-        pred_vars in
-    (pred_num, new_vars)
+        pred_args in
+    (pred_num, new_args)
   
   let subst_in_preds preds var_to var_from = 
     List.map
@@ -686,34 +686,34 @@ module Chc = struct
       preds
   *)
 
-  let make_vars_unique rule = 
+  let make_args_unique rule = 
     let (conc_pred, hyp_preds, phi) = rule in 
     let all_preds = conc_pred::hyp_preds in 
-    let used_vars = ref Syntax.Symbol.Set.empty in 
+    let used_args = ref Syntax.Symbol.Set.empty in 
     let pairs = ref [] in 
-    let make_vars_unique_in_pred pred = 
-      (*let (pred_num, pred_vars) = Atom.to_tuple pred in *)
-      let rec go pred_vars = 
-        match pred_vars with 
+    let make_args_unique_in_pred pred = 
+      (*let (pred_num, pred_args) = Atom.to_tuple pred in *)
+      let rec go pred_args = 
+        match pred_args with 
         | pred_var::rest -> 
-          let replaced_vars = go rest in 
-          if Syntax.Symbol.Set.mem pred_var !used_vars 
+          let replaced_args = go rest in 
+          if Syntax.Symbol.Set.mem pred_var !used_args 
           then 
             let new_var = 
               Syntax.mk_symbol srk 
                 ~name:("Dedup_"^(Syntax.show_symbol srk pred_var)) 
                 `TyInt in 
             pairs := (pred_var,new_var)::(!pairs); 
-            new_var::replaced_vars
+            new_var::replaced_args
           else 
-           (used_vars := Syntax.Symbol.Set.add pred_var !used_vars;
-            pred_var::replaced_vars)
+           (used_args := Syntax.Symbol.Set.add pred_var !used_args;
+            pred_var::replaced_args)
         | [] ->
-          pred_vars
+          pred_args
       in
-      Atom.of_tuple (pred.pred_num, go pred.vars)
+      Atom.of_tuple (pred.pred_num, go pred.args)
     in
-    let new_preds = List.map make_vars_unique_in_pred all_preds in
+    let new_preds = List.map make_args_unique_in_pred all_preds in
     match new_preds with
     | new_conc_pred :: new_hyp_preds ->
       let equalities = 
@@ -751,7 +751,7 @@ module Chc = struct
           else go vrest wrest
         | ([],[]) -> Syntax.mk_const srk sym
         | _ -> failwith "Unequal-length variable lists in substitute_args"
-      in go pred_occ1.vars pred_occ2.vars
+      in go pred_occ1.args pred_occ2.args
       in
     let new_phi = Syntax.substitute_const srk sub phi in
     (*Format.printf "  ~~ ~~Formula before: %a@." (Syntax.Formula.pp srk) phi;
@@ -765,12 +765,12 @@ module Chc = struct
     let keep = 
       List.fold_left 
         (fun keep pred_occ ->
-          (*let (pred_num, vars) = Atom.to_tuple pred_occ in*)
+          (*let (pred_num, args) = Atom.to_tuple pred_occ in*)
           List.fold_left
             (fun keep sym ->
                BatSet.Int.add (Syntax.int_of_symbol sym) keep)
             keep
-            pred_occ.vars)
+            pred_occ.args)
         BatSet.Int.empty
         pred_occs in
     let fresh_skolem =
@@ -784,9 +784,9 @@ module Chc = struct
       then sym 
       else fresh_skolem sym in
     let freshen_pred_occ pred_occ = 
-      (*let (pred_num, vars) = Atom.to_tuple pred_occ in*)
-      let new_vars = List.map map_symbol pred_occ.vars in 
-      Atom.of_tuple (pred_occ.pred_num, new_vars) in
+      (*let (pred_num, args) = Atom.to_tuple pred_occ in*)
+      let new_args = List.map map_symbol pred_occ.args in 
+      Atom.of_tuple (pred_occ.pred_num, new_args) in
     let (conc_pred, hyp_preds, phi) = rule in
     let new_conc_pred = freshen_pred_occ conc_pred in
     let new_hyp_preds = List.map freshen_pred_occ hyp_preds in
@@ -847,7 +847,7 @@ module Chc = struct
     let (outer_hyps_matching, outer_hyps_non_matching) = 
       List.partition
         (fun pred_occ ->
-          (*let (pred_num, vars) = Atom.to_tuple pred_occ in*)
+          (*let (pred_num, args) = Atom.to_tuple pred_occ in*)
           (pred_occ.pred_num = inner_conc.pred_num))
         outer_hyps
       in
@@ -874,6 +874,36 @@ module Chc = struct
     let phi = Syntax.mk_and srk (outer_phi::new_phis) in
     let hyps = outer_hyps_non_matching @ new_hyps in
     (outer_conc, hyps, phi)
+
+
+  (*
+  (* New CHC routines *)
+
+    (* ZZZ *)
+
+  (** Replace all skolem constants appearing in chc
+   *    with fresh skolem constants *)
+  let fresh_skolem_all chc =
+    let fresh_skolem =
+      Memo.memo 
+        (fun sym ->
+          let name = name_of_symbol srk sym in
+          let typ = Syntax.typ_symbol srk sym in
+          Syntax.mk_symbol srk ~name typ) in
+    let substitute_fresh term =
+      Syntax.substitute_const srk fresh_skolem term in
+    let freshen_atom pred_occ = 
+      (*let (pred_num, args) = Atom.to_tuple pred_occ in*)
+      let new_args = List.map map_symbol pred_occ.args in 
+      Atom.of_tuple (pred_occ.pred_num, new_args) in
+    let (conc_pred, hyp_preds, phi) = rule in
+    let new_conc_pred = freshen_atom conc_pred in
+    let new_hyp_preds = List.map freshen_atom hyp_preds in
+    let map_symbol_const sym = 
+      Syntax.mk_const srk (map_symbol sym) in
+    let new_phi = Syntax.substitute_const srk map_symbol_const phi in
+    (new_conc_pred, new_hyp_preds, new_phi)
+  *)
 
 end
 
@@ -1141,7 +1171,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
        bools in
     let phi = Syntax.mk_and srk2 (hyp_sub::(eqs @ bool_constraints)) in
     let new_rule = (conc_pred_occ, hyp_preds, phi) in 
-    (Chc.make_vars_unique new_rule)
+    (Chc.make_args_unique new_rule)
     (* *)
   in
   List.map linked_formula_of_rule rules
@@ -1371,7 +1401,7 @@ let make_chc_projection_and_symbols rule =
   let arg_list = List.fold_left
     (fun running_args occ ->
        (*let (_, args) = Chc.Atom.to_tuple occ in*)
-       List.append occ.vars running_args)
+       List.append occ.args running_args)
     []
     occs in
   let projection x =
