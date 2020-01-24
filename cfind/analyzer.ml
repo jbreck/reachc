@@ -495,16 +495,16 @@ module Chc = struct
   (* YYY *)
 
   let print_pred_occ ?(level=`info) srk pred_occ = 
-    let (pred_num, var_symbols) = PredOcc.to_tuple pred_occ in 
-    let n_vars = List.length var_symbols in 
+    (*let (pred_num, var_symbols) = PredOcc.to_tuple pred_occ in *)
+    let n_vars = List.length pred_occ.vars in 
     logf_noendl ~level "%s(" 
-      (Syntax.show_symbol srk (Syntax.symbol_of_int pred_num));
+      (Syntax.show_symbol srk (Syntax.symbol_of_int pred_occ.pred_num));
     List.iteri 
       (fun i sym ->
         (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
         logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;
         if i != n_vars - 1 then logf_noendl ~level ",")
-      var_symbols;
+      pred_occ.vars;
     logf_noendl ~level ")"
   
   let print_linked_formula ?(level=`info) srk rule = 
@@ -528,8 +528,9 @@ module Chc = struct
       List.concat
         (List.map 
           (fun occ -> 
-            let (pred_num,vars) = PredOcc.to_tuple occ in 
-            vars) all_preds) in
+            (*let (pred_num,vars) = PredOcc.to_tuple occ in 
+            vars*)
+            occ.vars) all_preds) in
     let exists = (fun sym -> List.mem sym all_pred_vars) in 
     let wedge = Wedge.abstract ~exists srk phi in
     logf_noendl ~level "%a@ -> " Wedge.pp wedge;
@@ -542,25 +543,27 @@ module Chc = struct
   
   let conc_pred_id_of_linked_formula rule = 
       let (conc_pred, hyp_preds, phi) = rule in
-      let (pred_num, vars) = PredOcc.to_tuple conc_pred in
-      pred_num
+      (*let (pred_num, vars) = PredOcc.to_tuple conc_pred in*)
+      conc_pred.pred_num
   
   let hyp_pred_ids_of_linked_formula rule = 
       let (conc_pred, hyp_preds, phi) = rule in
       List.map 
         (fun pred_occ ->
-          let (pred_num, vars) = PredOcc.to_tuple pred_occ in
-          pred_num)
+          (*let (pred_num, vars) = PredOcc.to_tuple pred_occ in
+          pred_num*)
+          pred_occ.pred_num)
         hyp_preds
 
   let transition_of_linked_formula rule = 
       let (conc_pred, hyp_preds, phi) = rule in
-      let (conc_pred_num, conc_vars) = PredOcc.to_tuple conc_pred in
+      (*let (conc_pred_num, conc_vars) = PredOcc.to_tuple conc_pred in*)
       assert (List.length hyp_preds = 1);
-      let (hyp_pred_num, hyp_vars) = PredOcc.to_tuple (List.hd hyp_preds) in
-      assert (hyp_pred_num = conc_pred_num);
+      (*let (hyp_pred_num, hyp_vars) = PredOcc.to_tuple (List.hd hyp_preds) in*)
+      let hyp_pred = List.hd hyp_preds in
+      assert (hyp_pred.pred_num = conc_pred.pred_num);
       Var.reset_tables;
-      List.iter (fun sym -> Var.register_var sym) hyp_vars;
+      List.iter (fun sym -> Var.register_var sym) hyp_pred.vars;
       (* conc_vars and hyp_vars are lists of symbols *)
       let transform = 
         List.map2 
@@ -572,8 +575,8 @@ module Chc = struct
                   "Unregistered variable in transition_of_linked_formula"),
               (* post-state as term *)
               Syntax.mk_const srk post))
-          hyp_vars
-          conc_vars
+          hyp_pred.vars
+          conc_pred.vars
         in
       K.construct phi transform
 
@@ -583,10 +586,11 @@ module Chc = struct
      as model_rule.  *)
   let identity_linked_formula model_rule =
     let (conc_pred, hyp_preds, _) = model_rule in
-    let (conc_pred_num, conc_vars) = PredOcc.to_tuple conc_pred in
+    (*let (conc_pred_num, conc_vars) = PredOcc.to_tuple conc_pred in*)
     assert (List.length hyp_preds = 1);
-    let (hyp_pred_num, hyp_vars) = PredOcc.to_tuple (List.hd hyp_preds) in
-    assert (hyp_pred_num = conc_pred_num);
+    let hyp_pred = List.hd hyp_preds in
+    (*let (hyp_pred_num, hyp_vars) = PredOcc.to_tuple (List.hd hyp_preds) in*)
+    assert (hyp_pred.pred_num = conc_pred.pred_num);
     let eq_atoms = List.fold_left2
       (fun atoms hyp_var conc_var ->
           let atom = Syntax.mk_eq srk 
@@ -594,8 +598,8 @@ module Chc = struct
             (Syntax.mk_const srk conc_var) 
           in atom::atoms)
       [] 
-      hyp_vars
-      conc_vars
+      hyp_pred.vars
+      conc_pred.vars
     in
     let phi = Syntax.mk_and srk eq_atoms in
     (conc_pred, hyp_preds, phi)
@@ -631,10 +635,11 @@ module Chc = struct
        variable into the predicate-occurrence in the conclusion of the rule that
        I return.  *)
     let (conc_pred, hyp_preds, _) = model_rule in
-    let (conc_pred_num, _) = PredOcc.to_tuple conc_pred in
+    (*let (conc_pred_num, _) = PredOcc.to_tuple conc_pred in*)
     assert (List.length hyp_preds = 1);
-    let (hyp_pred_num, hyp_vars) = PredOcc.to_tuple (List.hd hyp_preds) in
-    assert (hyp_pred_num = conc_pred_num);
+    let hyp_pred = List.hd hyp_preds in
+    (*let (hyp_pred_num, hyp_vars) = PredOcc.to_tuple (List.hd hyp_preds) in*)
+    assert (hyp_pred.pred_num = conc_pred.pred_num);
     let new_args = 
       List.map 
         (fun hyp_var -> 
@@ -645,8 +650,8 @@ module Chc = struct
              | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
                      failwith "Could not find symbol in linked_formula_of_transition"
            in go tr_symbols)
-        hyp_vars in
-    let new_conc_pred = PredOcc.of_tuple (conc_pred_num, new_args) in 
+        hyp_pred.vars in
+    let new_conc_pred = PredOcc.of_tuple (conc_pred.pred_num, new_args) in 
     (new_conc_pred, hyp_preds, body)
 
   (*
@@ -670,7 +675,7 @@ module Chc = struct
     let used_vars = ref Syntax.Symbol.Set.empty in 
     let pairs = ref [] in 
     let make_vars_unique_in_pred pred = 
-      let (pred_num, pred_vars) = PredOcc.to_tuple pred in 
+      (*let (pred_num, pred_vars) = PredOcc.to_tuple pred in *)
       let rec go pred_vars = 
         match pred_vars with 
         | pred_var::rest -> 
@@ -689,7 +694,7 @@ module Chc = struct
         | [] ->
           pred_vars
       in
-      PredOcc.of_tuple (pred_num, go pred_vars)
+      PredOcc.of_tuple (pred.pred_num, go pred.vars)
     in
     let new_preds = List.map make_vars_unique_in_pred all_preds in
     match new_preds with
@@ -717,9 +722,9 @@ module Chc = struct
     Format.printf "  ~~ ~~From-predicate:";
     print_pred_occ srk pred_occ2;
     Format.printf "@.";*)
-    let (pred_num1, vs) = PredOcc.to_tuple pred_occ1 in
-    let (pred_num2, ws) = PredOcc.to_tuple pred_occ2 in
-    assert (pred_num1 = pred_num2);
+    (*let (pred_num1, vs) = PredOcc.to_tuple pred_occ1 in
+      let (pred_num2, ws) = PredOcc.to_tuple pred_occ2 in*)
+    assert (pred_occ1.pred_num = pred_occ2.pred_num);
     let sub sym = 
       let rec go list1 list2 =
         match (list1,list2) with
@@ -729,7 +734,7 @@ module Chc = struct
           else go vrest wrest
         | ([],[]) -> Syntax.mk_const srk sym
         | _ -> failwith "Unequal-length variable lists in substitute_args"
-      in go vs ws 
+      in go pred_occ1.vars pred_occ2.vars
       in
     let new_phi = Syntax.substitute_const srk sub phi in
     (*Format.printf "  ~~ ~~Formula before: %a@." (Syntax.Formula.pp srk) phi;
@@ -743,12 +748,12 @@ module Chc = struct
     let keep = 
       List.fold_left 
         (fun keep pred_occ ->
-          let (pred_num, vars) = PredOcc.to_tuple pred_occ in
+          (*let (pred_num, vars) = PredOcc.to_tuple pred_occ in*)
           List.fold_left
             (fun keep sym ->
                BatSet.Int.add (Syntax.int_of_symbol sym) keep)
             keep
-            vars)
+            pred_occ.vars)
         BatSet.Int.empty
         pred_occs in
     let fresh_skolem =
@@ -762,9 +767,9 @@ module Chc = struct
       then sym 
       else fresh_skolem sym in
     let freshen_pred_occ pred_occ = 
-      let (pred_num, vars) = PredOcc.to_tuple pred_occ in
-      let new_vars = List.map map_symbol vars in 
-      PredOcc.of_tuple (pred_num, new_vars) in
+      (*let (pred_num, vars) = PredOcc.to_tuple pred_occ in*)
+      let new_vars = List.map map_symbol pred_occ.vars in 
+      PredOcc.of_tuple (pred_occ.pred_num, new_vars) in
     let (conc_pred, hyp_preds, phi) = rule in
     let new_conc_pred = freshen_pred_occ conc_pred in
     let new_hyp_preds = List.map freshen_pred_occ hyp_preds in
@@ -779,9 +784,9 @@ module Chc = struct
   let substitute_args_rule rule1 rule2 = 
     let (conc_pred1, hyp_preds1, phi1) = rule1 in
     let (conc_pred2, hyp_preds2, phi2) = rule2 in
-    let (conc_pred_num1, _) = PredOcc.to_tuple conc_pred1 in
-    let (conc_pred_num2, _) = PredOcc.to_tuple conc_pred2 in
-    assert (conc_pred_num1 = conc_pred_num2);
+    (*let (conc_pred_num1, _) = PredOcc.to_tuple conc_pred1 in
+      let (conc_pred_num2, _) = PredOcc.to_tuple conc_pred2 in*)
+    assert (conc_pred1.pred_num = conc_pred2.pred_num);
     let phi2 = substitute_args_pred conc_pred1 conc_pred2 phi2 in
     (* Note: the following asserts that the two hypothesis predicate 
          occurrence lists have the same order, which isn't strictly necessary *)
@@ -821,12 +826,12 @@ module Chc = struct
     Format.printf "@.";*)
     let (outer_conc, outer_hyps, outer_phi) = outer_rule in
     let (inner_conc, inner_hyps, inner_phi) = inner_rule in
-    let (inner_conc_pred_num, _) = PredOcc.to_tuple inner_conc in
+    (*let (inner_conc_pred_num, _) = PredOcc.to_tuple inner_conc in*)
     let (outer_hyps_matching, outer_hyps_non_matching) = 
       List.partition
         (fun pred_occ ->
-          let (pred_num, vars) = PredOcc.to_tuple pred_occ in
-          (pred_num = inner_conc_pred_num))
+          (*let (pred_num, vars) = PredOcc.to_tuple pred_occ in*)
+          (pred_occ.pred_num = inner_conc.pred_num))
         outer_hyps
       in
     (if List.length outer_hyps_matching = 0 
@@ -836,8 +841,8 @@ module Chc = struct
       List.fold_left
         (fun (hyps,phis) outer_hyp -> 
           (*Format.printf "  ~~Substituting for one outer hypothesis...@.";*)
-          let (outer_hyp_pred_num, outer_hyp_args) = PredOcc.to_tuple outer_hyp in
-          assert (outer_hyp_pred_num = inner_conc_pred_num);
+          (*let (outer_hyp_pred_num, outer_hyp_args) = PredOcc.to_tuple outer_hyp in*)
+          assert (outer_hyp.pred_num = inner_conc.pred_num);
           let new_phi = substitute_args_pred outer_hyp inner_conc inner_phi in
           let new_rule = (outer_hyp, inner_hyps, new_phi) in
           (*Format.printf "  ~~Rule after substitute_args_pred and before fresh_skolem:@.    ";
@@ -859,8 +864,8 @@ let linked_formula_has_hyp rule target_hyp_num =
   let (conc, hyps, phi) = rule in
   List.fold_left 
     (fun running hyp -> 
-       let (pred_num, args) = Chc.PredOcc.to_tuple hyp in
-       (running || (pred_num = target_hyp_num)))
+       (*let (pred_num, args) = Chc.PredOcc.to_tuple hyp in*)
+       (running || (hyp.pred_num = target_hyp_num)))
     false
     hyps;;
 
@@ -1182,10 +1187,10 @@ let subst_summaries rules summaries =
      let (conc, hyps, phi) = rule in
      List.fold_left 
        (fun rule_inprog hyp -> 
-          let (pred_num, args) = Chc.PredOcc.to_tuple hyp in
-          if BatMap.Int.mem pred_num summaries then
-            let pred_summary = BatMap.Int.find pred_num summaries in
-            (if linked_formula_has_hyp rule_inprog pred_num then
+          (*let (pred_num, args) = Chc.PredOcc.to_tuple hyp in*)
+          if BatMap.Int.mem hyp.pred_num summaries then
+            let pred_summary = BatMap.Int.find hyp.pred_num summaries in
+            (if linked_formula_has_hyp rule_inprog hyp.pred_num then
               Chc.subst_all rule_inprog pred_summary
             else rule_inprog)
           else 
@@ -1222,9 +1227,9 @@ let build_rule_list_matrix scc rulemap summaries const_id =
            let (conc, hyps, phi) = rule in
            match hyps with
            | [hyp] ->
-             let (hyp_pred_num, args) = Chc.PredOcc.to_tuple hyp in
+             (*let (hyp_pred_num, args) = Chc.PredOcc.to_tuple hyp in*)
              modify_def_matrix_element 
-                rule_list_matrix p hyp_pred_num [] (fun rs -> rule::rs)
+                rule_list_matrix p hyp.pred_num [] (fun rs -> rule::rs)
            | [] ->
              modify_def_matrix_element 
                 rule_list_matrix p const_id [] (fun rs -> rule::rs)
@@ -1348,8 +1353,8 @@ let make_chc_projection_and_symbols rule =
   let occs = conc::hyps in
   let arg_list = List.fold_left
     (fun running_args occ ->
-       let (_, args) = Chc.PredOcc.to_tuple occ in
-       List.append args running_args)
+       (*let (_, args) = Chc.PredOcc.to_tuple occ in*)
+       List.append occ.vars running_args)
     []
     occs in
   let projection x =
@@ -1494,8 +1499,8 @@ let detect_linear_scc scc rulemap summaries =
                let n_scc_hyps_this_rule = 
                List.fold_left (* for hyp in hyps *)
                  (fun n_scc_hyps hyp ->
-                   let (hyp_pred_num, args) = Chc.PredOcc.to_tuple hyp in
-                   if BatMap.Int.mem hyp_pred_num !summaries 
+                   (*let (hyp_pred_num, args) = Chc.PredOcc.to_tuple hyp in*)
+                   if BatMap.Int.mem hyp.pred_num !summaries 
                    then n_scc_hyps
                    else (n_scc_hyps + 1))
                  0
