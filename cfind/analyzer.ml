@@ -429,7 +429,14 @@ module VarSet = BatSet.Int
 
 type pred_num_t = int
 type var_pos_list = Srk.Syntax.Symbol.t list
-type predicate_occurrence = pred_num_t * var_pos_list
+type pred_occ_record = {
+    pred_num:pred_num_t;
+    vars:Srk.Syntax.Symbol.t list
+}
+type predicate_occurrence = pred_occ_record
+
+
+(*type predicate_occurrence = pred_num_t * var_pos_list*)
 type (*'a*) linked_formula = predicate_occurrence *
                          (predicate_occurrence list) *
                          Sctx.t Srk.Syntax.Formula.t
@@ -447,18 +454,10 @@ module Chc = struct
   module PredOcc = struct
     (* predicate occurrence *)
     type t = predicate_occurrence
-    type pred_occ_tuple = predicate_occurrence
-    type pred_occ_record = {
-        pred_num:pred_num_t;
-        vars:Srk.Syntax.Symbol.t list
-    }
+    (*type pred_occ_tuple = predicate_occurrence*)
+    type pred_occ_tuple = pred_num_t * var_pos_list
 
-    let of_tuple ((pred:pred_num_t), (vars:var_pos_list)) : predicate_occurrence = 
-      (pred, vars)
-
-    let mk (pred:pred_num_t) (vars:var_pos_list) : predicate_occurrence = 
-      (pred, vars)
-
+    (*
     (* Using pred_occ_tuple *)
     let to_rec (pred_occ:pred_occ_tuple) : pred_occ_record =
       let (pred_num,vars) = pred_occ in
@@ -467,14 +466,27 @@ module Chc = struct
     let to_tuple (pred_occ:pred_occ_tuple) : (pred_num_t * var_pos_list) =
       pred_occ
 
-    (*
+    let of_tuple ((pred:pred_num_t), (vars:var_pos_list)) : predicate_occurrence = 
+      (pred, vars)
+
+    let mk (pred_num:pred_num_t) (vars:var_pos_list) : predicate_occurrence = 
+      (pred_num, vars)
+
+    *)
+
+    
     (* Using pred_occ_record *)
-    let to_rec (pred_occ:pred_occ_tuple) : pred_occ_record =
+    let to_rec (pred_occ:predicate_occurrence) : pred_occ_record =
       pred_occ
 
     let to_tuple (pred_occ:pred_occ_record) : (pred_num_t * var_pos_list) =
       (pred_occ.pred_num,pred_occ.vars)
-    *)
+
+    let of_tuple ((pred_num:pred_num_t), (vars:var_pos_list)) : predicate_occurrence = 
+      {pred_num=pred_num;vars=vars}
+
+    let mk (pred_num:pred_num_t) (vars:var_pos_list) : predicate_occurrence = 
+      {pred_num=pred_num;vars=vars}
 
   end
 
@@ -1088,7 +1100,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
       | [] -> 
         if (not (is_syntactic_false srk2 conc_sub))
         then failwith "Unrecognized rule format (Non-false non-predicate conclusion)"
-        else (query_pred, [])
+        else Chc.PredOcc.of_tuple (query_pred, [])
       | _ -> failwith "Unrecognized rule format (Multiple conclusion predicate)"
     in 
     let eqs = hyp_eqs @ conc_eqs in
@@ -1210,7 +1222,7 @@ let build_rule_list_matrix scc rulemap summaries const_id =
            let (conc, hyps, phi) = rule in
            match hyps with
            | [hyp] ->
-             let (hyp_pred_num, args) = hyp in
+             let (hyp_pred_num, args) = Chc.PredOcc.to_tuple hyp in
              modify_def_matrix_element 
                 rule_list_matrix p hyp_pred_num [] (fun rs -> rule::rs)
            | [] ->
