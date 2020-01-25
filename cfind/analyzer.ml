@@ -1129,33 +1129,7 @@ let build_rule_matrix scc rulemap summaries const_id =
     ) scc;
   rule_matrix  
 
-let analyze_query_predicate rule_matrix query_int const_id = 
-  match get_matrix_element_opt rule_matrix query_int const_id with
-  | None -> failwith "Missing final CHC"
-  | Some final_chc -> 
-    logf_noendl ~level:`info "Final CHC: @.  ";
-    Chc.print ~level:`info srk final_chc;
-    logf ~level:`info "";
-    begin
-      match Wedge.is_sat srk final_chc.fmla with
-      | `Sat -> logf ~level:`always "RESULT: UNKNOWN (final constraint is sat)"
-      | `Unsat -> logf ~level:`always "RESULT: SAT (final constraint is unsat)"
-      | `Unknown -> 
-        if not !retry_flag then 
-          logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
-        else
-        begin
-          logf ~level:`info "Preliminary: unknown (final constraint unknown)";
-          logf ~level:`info "Retrying...";
-          let wedge = Wedge.abstract srk final_chc.fmla in
-          if Wedge.is_bottom wedge
-          then logf ~level:`always "RESULT: SAT (final constraint is unsat)"
-          else logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
-        end
-    end
-
-let eliminate_predicate rule_matrix (*query_int*) const_id p =
-  (*if p = query_int then () else*)
+let eliminate_predicate rule_matrix const_id p =
   logf ~level:`info "   -Eliminating %a" 
     (Syntax.pp_symbol srk) 
     (Syntax.symbol_of_int p);
@@ -1217,7 +1191,7 @@ let summarize_linear_scc scc rulemap summaries =
   let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
   (* Now, eliminate predicates from this SCC one at a time*)
   logf ~level:`info "  Eliminating predicates";
-  List.iter (eliminate_predicate rule_matrix (*query_int*) const_id) scc;
+  List.iter (eliminate_predicate rule_matrix const_id) scc;
   (* The remaining matrix entries are summaries; 
      they have no hypothesis predicate occurrences *)
   List.iter
@@ -1370,14 +1344,39 @@ let detect_linear_scc scc rulemap summaries =
     true
     scc
 
+(* ********************* Analyzer ************************* *)
+
+let analyze_query_predicate rule_matrix query_int const_id = 
+  match get_matrix_element_opt rule_matrix query_int const_id with
+  | None -> failwith "Missing final CHC"
+  | Some final_chc -> 
+    logf_noendl ~level:`info "Final CHC: @.  ";
+    Chc.print ~level:`info srk final_chc;
+    logf ~level:`info "";
+    begin
+      match Wedge.is_sat srk final_chc.fmla with
+      | `Sat -> logf ~level:`always "RESULT: UNKNOWN (final constraint is sat)"
+      | `Unsat -> logf ~level:`always "RESULT: SAT (final constraint is unsat)"
+      | `Unknown -> 
+        if not !retry_flag then 
+          logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
+        else
+        begin
+          logf ~level:`info "Preliminary: unknown (final constraint unknown)";
+          logf ~level:`info "Retrying...";
+          let wedge = Wedge.abstract srk final_chc.fmla in
+          if Wedge.is_bottom wedge
+          then logf ~level:`always "RESULT: SAT (final constraint is unsat)"
+          else logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
+        end
+    end
+
 let handle_query_predicate scc rulemap summaries query_int = 
   logf ~level:`info "Analysis of query predicate:@.";
   let const_id = -1 in
   let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
   (* The above call boils down to one disjoin_chc_ts call *)
   analyze_query_predicate rule_matrix query_int const_id
-
-(* ********************* Analyzer ************************* *)
 
 let analyze_scc finished_flag summaries rulemap query_int scc =
   if !finished_flag then () else
