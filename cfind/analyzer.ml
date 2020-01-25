@@ -515,36 +515,36 @@ module Chc = struct
        freshed_and_equate_args gives less fine-grained control, because it
        forces you to either replace all the arguments of an atom or leave
        all the arguments of that atom un-replaced. *)
-  let freshen_and_equate_args_finegrained chc tgt_conc_atom tgt_hyp_atom_list = 
+  let freshen_and_equate_args_finegrained chc plan_conc_atom plan_hyp_atom_list = 
     let chc = fresh_skolem_all chc in
     let old_atoms = chc.conc::chc.hyps in
-    let tgt_pseudo_atoms = tgt_conc_atom::tgt_hyp_atom_list in
+    let plan_pseudo_atoms = plan_conc_atom::plan_hyp_atom_list in
     let equations = List.concat (List.map2 
-      (fun old_atom tgt_pseudo_atom ->
-          let (tgt_pred_num,tgt_args) = tgt_pseudo_atom in
-          assert (old_atom.pred_num = tgt_pred_num);
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          assert (old_atom.pred_num = plan_pred_num);
           List.concat (List.map2 
-             (fun old_arg tgt_arg_option -> 
-                 match tgt_arg_option with
+             (fun old_arg plan_arg_option -> 
+                 match plan_arg_option with
                  | None -> []
                  | Some new_arg -> [Syntax.mk_eq srk old_arg new_arg])
              old_atom.args
-             tgt_args))
+             plan_args))
       old_atoms
-      tgt_pseudo_atoms) in
+      plan_pseudo_atoms) in
     let new_atoms = List.map2
-      (fun old_atom tgt_pseudo_atom ->
-          let (tgt_pred_num,tgt_args) = tgt_pseudo_atom in
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
           let new_args = List.map2
-            (fun old_arg tgt_arg_option ->
-                match tgt_arg_option with
+            (fun old_arg plan_arg_option ->
+                match plan_arg_option with
                 | None -> old_arg
                 | Some new_arg -> new_arg)
             old_atom.args
-            tgt_args in
+            plan_args in
           Atom.construct old_atom.pred_num new_args)
       old_atoms
-      tgt_pseudo_atoms in
+      plan_pseudo_atoms in
     let new_conc = List.hd new_atoms in
     let new_hyps = List.tl new_atoms in
     let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
@@ -553,10 +553,10 @@ module Chc = struct
   (* Coarse-grained version *)
   (* FIXME: coarse-grained version could be rewritten to use the
       finegrained version *)
-  let freshen_and_equate_args chc tgt_conc_atom tgt_hyp_atom_list = 
+  let freshen_and_equate_args chc plan_conc_atom plan_hyp_atom_list = 
     let chc = fresh_skolem_all chc in
     let old_atoms = chc.conc::chc.hyps in
-    let new_atoms = tgt_conc_atom::tgt_hyp_atom_list in
+    let new_atoms = plan_conc_atom::plan_hyp_atom_list in
     let equations = List.concat (List.map2 
       (fun old_atom new_atom_option ->
           match new_atom_option with
@@ -571,16 +571,16 @@ module Chc = struct
              end)
       old_atoms
       new_atoms) in
-    let new_conc = match tgt_conc_atom with
+    let new_conc = match plan_conc_atom with
                    | None -> chc.conc
                    | Some new_conc_atom -> new_conc_atom in
     let new_hyps = 
-        List.map2 (fun old_atom tgt_hyp_atom ->
-            match tgt_hyp_atom with
+        List.map2 (fun old_atom plan_hyp_atom ->
+            match plan_hyp_atom with
             | None -> old_atom
             | Some new_hyp_atom -> new_hyp_atom)
         chc.hyps
-        tgt_hyp_atom_list in 
+        plan_hyp_atom_list in 
     let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
     construct new_conc new_hyps new_phi
     
@@ -597,11 +597,11 @@ module Chc = struct
               Syntax.mk_const srk sym)
           atom.args in
         Atom.construct atom.pred_num new_args in
-    let tgt_conc = Some (atom_with_new_syms chc.conc) in
-    let tgt_hyps = List.map
+    let plan_conc = Some (atom_with_new_syms chc.conc) in
+    let plan_hyps = List.map
       (fun hyp -> Some (atom_with_new_syms hyp))
       chc.hyps in
-    freshen_and_equate_args chc tgt_conc tgt_hyps
+    freshen_and_equate_args chc plan_conc plan_hyps
 
   let fresh_symbols_for_term_args chc =
     let new_sym atom arg_num = 
@@ -620,11 +620,11 @@ module Chc = struct
               Syntax.mk_const srk sym)
           atom.args in
         Atom.construct atom.pred_num new_args in
-    let tgt_conc = Some (atom_with_new_syms chc.conc) in
-    let tgt_hyps = List.map
+    let plan_conc = Some (atom_with_new_syms chc.conc) in
+    let plan_hyps = List.map
       (fun hyp -> Some (atom_with_new_syms hyp))
       chc.hyps in
-    freshen_and_equate_args chc tgt_conc tgt_hyps
+    freshen_and_equate_args chc plan_conc plan_hyps
 
   (* If term is exactly an occurrence of symbol s, return Some s, otherwise
        return None *)
@@ -654,13 +654,13 @@ module Chc = struct
   let fresh_symbols_to_make_constraints_explicit chc =
     let atoms = chc.conc::chc.hyps in
     let seen_symbols = ref Syntax.Symbol.Set.empty in
-    let tgt_atoms = List.map
+    let plan_atoms = List.map
       (fun atom ->
           (atom.pred_num,
            List.map
              (fun arg ->
                  let new_symbols = Syntax.symbols arg in
-                 let tgt_arg = 
+                 let plan_arg = 
                    (* If we set this to None, we'll replace arg with a 
                         fresh constant; if we set it to Some t, we'll
                         replace arg with t.  *)
@@ -672,12 +672,12 @@ module Chc = struct
                       None in
                  seen_symbols := 
                      Syntax.Symbol.Set.union !seen_symbols new_symbols;
-                 tgt_arg)
+                 plan_arg)
              atom.args))
       atoms in
-    let tgt_conc_atom = List.hd tgt_atoms in
-    let tgt_hyp_atoms = List.tl tgt_atoms in
-    freshen_and_equate_args_finegrained chc tgt_conc_atom tgt_hyp_atoms
+    let plan_conc_atom = List.hd plan_atoms in
+    let plan_hyp_atoms = List.tl plan_atoms in
+    freshen_and_equate_args_finegrained chc plan_conc_atom plan_hyp_atoms
 
   let subst_all outer_chc inner_chc = 
     let outer_chc = fresh_skolem_all outer_chc in
@@ -693,11 +693,11 @@ module Chc = struct
       List.fold_left
         (fun (hyps, phis) outer_hyp -> 
           assert (outer_hyp.pred_num = inner_chc.conc.pred_num);
-          let tgt_conc_atom = Some outer_hyp in
-          let tgt_hyp_atom_list = List.map (fun hyp -> None) inner_chc.hyps in
+          let plan_conc_atom = Some outer_hyp in
+          let plan_hyp_atom_list = List.map (fun hyp -> None) inner_chc.hyps in
           let new_inner_chc = 
               freshen_and_equate_args 
-                inner_chc tgt_conc_atom tgt_hyp_atom_list in
+                inner_chc plan_conc_atom plan_hyp_atom_list in
           (new_inner_chc.hyps @ hyps, new_inner_chc.fmla::phis))
         ([],[])
         outer_hyps_matching
@@ -716,11 +716,11 @@ module Chc = struct
       let new_phis = 
         List.map
           (fun old_chc ->
-             let tgt_conc_atom = Some chc1.conc in
-             let tgt_hyp_atom_list = List.map (fun hyp -> Some hyp) chc1.hyps in
+             let plan_conc_atom = Some chc1.conc in
+             let plan_hyp_atom_list = List.map (fun hyp -> Some hyp) chc1.hyps in
              let new_chc = 
                freshen_and_equate_args
-                 old_chc tgt_conc_atom tgt_hyp_atom_list in
+                 old_chc plan_conc_atom plan_hyp_atom_list in
              new_chc.fmla) 
           old_chcs in
       let new_phi = Syntax.mk_or srk (chc1.fmla::new_phis) in
