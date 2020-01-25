@@ -1075,7 +1075,8 @@ module Chc = struct
     let new_sym atom arg_num = 
         let arg = List.nth atom.args arg_num in 
         match Syntax.destruct srk arg with
-        | `Var (v, `TyInt) -> (Syntax.symbol_of_int v)
+        (*| `Var (v, `TyInt) -> (Syntax.symbol_of_int v)*)
+        | `App (func, f_args) when f_args = [] -> func
         | _ -> (* predicate argument term that isn't a var *)
           let name = 
             (name_of_symbol srk (Syntax.symbol_of_int atom.pred_num)) 
@@ -1096,7 +1097,8 @@ module Chc = struct
 
   let symbol_of_arg ?(errormsg="fresh_symbols_for_args did not do its job") arg = 
     match Syntax.destruct srk arg with
-    | `Var (v, `TyInt) -> Syntax.symbol_of_int v
+    (*| `Var (v, `TyInt) -> Syntax.symbol_of_int v*)
+    | `App (func, args) when args = [] -> func
     | _ -> failwith errormsg
 
   let print ?(level=`info) srk chc = 
