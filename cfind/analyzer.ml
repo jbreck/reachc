@@ -459,14 +459,10 @@ module Chc = struct
     let to_rec (atom:atom_t) : atom_t =
       atom
 
-    (*let to_tuple (atom:atom_t) : (pred_num_t * atom_arg list) =
-      (atom.pred_num,atom.args)*)
-
     let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       {pred_num=pred_num;args=args}
 
     let print ?(level=`info) srk atom = 
-      (*let (pred_num, var_symbols) = Atom.to_tuple atom in *)
       let n_args = List.length atom.args in 
       logf_noendl ~level "%s(" 
         (Syntax.show_symbol srk (Syntax.symbol_of_int atom.pred_num));
@@ -483,9 +479,6 @@ module Chc = struct
 
   let construct (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : chc_t = 
     {conc=conc;hyps=hyps;fmla=fmla}
-
-  (*let to_tuple (chc:chc_t) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
-    (chc.conc,chc.hyps,chc.fmla) *)
 
   let chc_has_hyp chc target_hyp_num = 
     List.fold_left 
@@ -641,7 +634,6 @@ module Chc = struct
     | _ -> failwith errormsg
 
   let print ?(level=`info) srk chc = 
-    (*let (conc_pred, hyp_preds, phi) = rule in*)
     logf_noendl ~level "{ @[";
     List.iter 
       (fun pred -> Atom.print srk pred; logf_noendl ~level ";@ ")
@@ -651,7 +643,6 @@ module Chc = struct
     logf_noendl ~level "@] }@."
  
   let print_as_wedge ?(level=`info) srk chc = 
-    (*let (conc_pred, hyp_preds, phi) = rule in*)
     let chc = fresh_symbols_for_term_args chc in 
     logf_noendl ~level "{ @[";
     List.iter 
@@ -670,10 +661,7 @@ module Chc = struct
 
   let to_transition chc = 
     let chc = fresh_symbols_for_args chc in
-    (*let (conc_pred, hyp_preds, phi) = chc in*)
-    (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
     assert (List.length chc.hyps = 1);
-    (*let (hyp_atom_num, hyp_args) = Atom.to_tuple (List.hd hyp_atoms) in*)
     let hyp_atom = List.hd chc.hyps in
     assert (hyp_atom.pred_num = chc.conc.pred_num);
     Var.reset_tables;
@@ -700,11 +688,8 @@ module Chc = struct
      The returned chc will have the same predicate occurrences
      as model_chc.  *)
   let identity_chc model_chc =
-    (*let (conc_pred, hyp_preds, _) = model_chc in*)
-    (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
     assert (List.length model_chc.hyps = 1);
     let hyp_pred = List.hd model_chc.hyps in
-    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
     assert (hyp_pred.pred_num = model_chc.conc.pred_num);
     let eqs = List.fold_left2
       (fun eqs hyp_arg conc_arg ->
@@ -746,11 +731,8 @@ module Chc = struct
        (new?) post-state variable that it corresponds to, and then I'll put that 
        variable into the predicate-occurrence in the conclusion of the rule that
        I return.  *)
-    (*let (conc_pred, hyp_preds, _) = model_chc in*)
-    (*let (conc_pred_num, _) = Atom.to_tuple conc_pred in*)
     assert (List.length model_chc.hyps = 1);
     let hyp_pred = List.hd model_chc.hyps in
-    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
     assert (hyp_pred.pred_num = model_chc.conc.pred_num);
     let new_args = 
       List.map 
@@ -1026,9 +1008,6 @@ let build_chc_records srk1 srk2 phi query_pred =
              (Syntax.mk_real srk2 (QQ.one)))])
        bools in
     let phi = Syntax.mk_and srk2 (hyp_sub::(eqs @ bool_constraints)) in
-    (*let new_rule = (conc_atom, hyp_preds, phi) in *)
-    (*(Chc.make_args_unique new_rule)*)
-    (*new_rule*)
     (Chc.construct conc_atom hyp_preds phi)
     (* *)
   in
@@ -1090,10 +1069,8 @@ let subst_summaries chcs summaries =
   (* FIXME use declared variable names from somewhere? *)
   List.map
     (fun chc ->
-     (*let (conc, hyps, phi) = rule in*)
      List.fold_left 
        (fun rule_inprog hyp -> 
-          (*let (pred_num, args) = Chc.Atom.to_tuple hyp in*)
           if BatMap.Int.mem hyp.pred_num summaries then
             let pred_summary = BatMap.Int.find hyp.pred_num summaries in
             (if Chc.chc_has_hyp rule_inprog hyp.pred_num then
@@ -1113,10 +1090,8 @@ let build_rule_list_matrix scc rulemap summaries const_id =
       let p_rules = subst_summaries (BatMap.Int.find p rulemap) !summaries in
       List.iter 
         (fun rule ->
-           (*let (conc, hyps, phi) = rule in*)
            match rule.hyps with
            | [hyp] ->
-             (*let (hyp_pred_num, args) = Chc.Atom.to_tuple hyp in*)
              modify_def_matrix_element 
                 rule_list_matrix p hyp.pred_num [] (fun rs -> rule::rs)
            | [] ->
@@ -1162,7 +1137,6 @@ let analyze_query_predicate rule_matrix query_int const_id =
     logf_noendl ~level:`info "Final CHC: @.  ";
     Chc.print ~level:`info srk final_chc;
     logf ~level:`info "";
-    (*let (conc, hyps, final_phi) = final_chc in*)
     begin
       match Wedge.is_sat srk final_chc.fmla with
       | `Sat -> logf ~level:`always "RESULT: UNKNOWN (final constraint is sat)"
@@ -1238,11 +1212,9 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
   (* At this point, p has been eliminated from the system *)
 
 let make_chc_projection_and_symbols chc = 
-  (*let (conc, hyps, _) = chc in*)
   let atoms = chc.conc::chc.hyps in
   let sym_list = List.fold_left
     (fun running_syms atom ->
-       (*let (_, args) = Chc.Atom.to_tuple atom in*)
        let syms = List.map (fun arg -> Chc.symbol_of_arg arg) atom.args in
        List.append syms running_syms)
     []
@@ -1265,7 +1237,7 @@ let make_chc_projection_and_symbols chc =
      attach it to the list of hypothesis predicate occurrences, and combine
      it with the constraint formula from info_structure to obtain the desired
      CHC. *)
-let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (chc_t * atom_t) =
+let make_hypothetical_summary_chc info_structure fact_atom : (chc_t * atom_t) =
     let bounding_symbol_list = List.map
       (fun (sym, corresponding_term) -> Srk.Syntax.mk_const srk sym)
       info_structure.ChoraCHC.bound_pairs in 
@@ -1276,7 +1248,7 @@ let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (chc_t * ato
     (Chc.construct fact_atom [new_atom] info_structure.call_abstraction_fmla,
      new_atom)
 
-let make_final_summary_chc summary_fmla fact_atom : (*'a*) chc_t =
+let make_final_summary_chc summary_fmla fact_atom : chc_t =
     Chc.construct fact_atom [] summary_fmla
 
 let summarize_nonlinear_scc scc rulemap summaries = 
@@ -1295,13 +1267,10 @@ let summarize_nonlinear_scc scc rulemap summaries =
         let p_chcs = ProcMap.find p subbed_chcs_map in
         let p_facts = 
           List.filter
-            (fun chc -> (*let (conc, hyps, phi) = chc in *) List.length chc.hyps == 0)
+            (fun chc -> List.length chc.hyps == 0)
             p_chcs in
         let p_fact = Chc.disjoin p_facts in
         let (projection, pre_symbols) = make_chc_projection_and_symbols p_fact in
-        (*let tr_symbols = [] in*)
-          (* List.map (fun sym -> (sym, AuxVarModuleCHC.post_symbol sym)) pre_symbols in *)
-        (*let (fact_atom, fact_hyps, fact_phi) = p_fact in*)
         (assert ((List.length p_fact.hyps) = 0));
         (* Call into ChoraCore to generalize the fact into a hypothetical summary formula,
              along with a list of bounding symbols, stored together in bounds_structure *)
@@ -1325,7 +1294,7 @@ let summarize_nonlinear_scc scc rulemap summaries =
         let p_chcs = ProcMap.find p subbed_chcs_map in
         let p_rules = 
           List.filter
-            (fun chc -> (*let (conc, hyps, phi) = chc in *) List.length chc.hyps != 0)
+            (fun chc -> List.length chc.hyps != 0)
             p_chcs in
         let p_subbed_rules = subst_summaries p_rules hyp_sum_map in
         let p_rec_rule = Chc.disjoin p_subbed_rules in
@@ -1333,7 +1302,6 @@ let summarize_nonlinear_scc scc rulemap summaries =
         let p_subst_pred_num_map = 
             IntMap.add p_fact_atom.pred_num p_fact_atom !subst_pred_num_map in
         let p_vocab_fixup = Chc.subst_equating_globally p_rec_rule p_subst_pred_num_map in
-        (*let (_,_,rec_rule_phi) = p_rec_rule in*)
         ProcMap.add p p_vocab_fixup.fmla rec_fmla_map)
       ProcMap.empty
       scc in
@@ -1368,11 +1336,9 @@ let detect_linear_scc scc rulemap summaries =
         List.fold_left (* for p_chc in p_chcs *)
           (fun is_linear_chc chc -> is_linear_chc &&
              begin
-               (*let (conc, hyps, phi) = chc in*)
                let n_scc_hyps_this_chc = 
                List.fold_left (* for hyp in hyps *)
                  (fun n_scc_hyps hyp ->
-                   (*let (hyp_pred_num, args) = Chc.Atom.to_tuple hyp in*)
                    if BatMap.Int.mem hyp.pred_num !summaries 
                    then n_scc_hyps
                    else (n_scc_hyps + 1))
@@ -1439,8 +1405,6 @@ let print_summaries summaries =
 let analyze_ruleset chcs query_int = 
   let callgraph = List.fold_left
     (fun graph chc ->
-      (*let conc_pred_id = Chc.conc_pred_id_of_chc_t chc in
-      let hyp_pred_ids = Chc.hyp_pred_ids_of_chc_t chc in*)
       List.fold_left
         (fun g p -> CallGraph.add_edge g chc.conc.pred_num p)
         graph
@@ -1450,7 +1414,6 @@ let analyze_ruleset chcs query_int =
   in
   let rulemap = List.fold_left
     (fun rulemap chc ->
-      (*let conc_pred_id = Chc.conc_pred_id_of_chc_t chc in*)
       BatMap.Int.add
         chc.conc.pred_num
         (chc::(BatMap.Int.find_default [] chc.conc.pred_num rulemap))
