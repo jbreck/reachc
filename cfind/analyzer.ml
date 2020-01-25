@@ -437,6 +437,7 @@ module VarSet = BatSet.Int
 
 type atom_arg_t = Sctx.t Srk.Syntax.Term.t
 type pred_num_t = int
+
 type atom_t = {
     pred_num:pred_num_t;
     args:atom_arg_t list
@@ -445,7 +446,7 @@ type atom_t = {
 type chc_t = {
    conc:atom_t;
    hyps:atom_t list;
-   fmla:Sctx.t Srk.Syntax.Formula.t
+   fmla:Sctx.t Srk.Syntax.Formula.t (* constraint formula *)
 } 
 
 module Chc = struct
