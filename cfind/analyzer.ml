@@ -524,8 +524,18 @@ module Chc = struct
              end)
       old_atoms
       new_atoms) in
+    let new_conc = match tgt_conc_atom with
+                   | None -> chc.conc
+                   | Some new_conc_atom -> new_conc_atom in
+    let new_hyps = 
+        List.map2 (fun old_atom tgt_hyp_atom ->
+            match tgt_hyp_atom with
+            | None -> old_atom
+            | Some new_hyp_atom -> new_hyp_atom)
+        chc.hyps
+        tgt_hyp_atom_list in 
     let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
-    construct chc.conc chc.hyps new_phi
+    construct new_conc new_hyps new_phi
     
   let subst_all outer_chc inner_chc = 
     let outer_chc = fresh_skolem_all outer_chc in
