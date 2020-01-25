@@ -482,7 +482,7 @@ module Chc = struct
     let of_tuple ((pred:pred_num_t), (args:atom_arg list)) : atom_t = 
       (pred, args)
 
-    let mk (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
+    let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       (pred_num, args)
 
     *)
@@ -498,7 +498,7 @@ module Chc = struct
     let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
       {pred_num=pred_num;args=args}
 
-    let mk (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
+    let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       {pred_num=pred_num;args=args}
 
   end
@@ -904,7 +904,7 @@ module Chc = struct
     let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
       {pred_num=pred_num;args=args}
 
-    let mk (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
+    let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       {pred_num=pred_num;args=args}
 
     let print ?(level=`info) srk atom = 
@@ -938,7 +938,7 @@ module Chc = struct
   let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : linked_formula = 
     {conc=conc;hyps=hyps;fmla=fmla}
 
-  let mk (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : linked_formula = 
+  let construct (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : linked_formula = 
     {conc=conc;hyps=hyps;fmla=fmla}
 
   let to_tuple (chc:linked_formula) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
@@ -969,7 +969,7 @@ module Chc = struct
     let freshen_atom atom = 
       (* Term version *)
       let new_args = List.map freshen_expr atom.args in 
-      Atom.mk atom.pred_num new_args in
+      Atom.construct atom.pred_num new_args in
     let new_conc_atom = freshen_atom chc.conc in
     let new_hyp_atoms = List.map freshen_atom chc.hyps in
     let new_phi = freshen_expr chc.fmla in
@@ -994,7 +994,7 @@ module Chc = struct
       old_atoms
       new_atoms) in
     let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
-    mk chc.conc chc.hyps new_phi
+    construct chc.conc chc.hyps new_phi
     
   let subst_all outer_chc inner_chc = 
     let outer_chc = fresh_skolem_all outer_chc in
@@ -1021,7 +1021,7 @@ module Chc = struct
       in
     let phi = Syntax.mk_and srk (outer_chc.fmla::new_phis) in
     let hyps = outer_hyps_non_matching @ new_hyps in
-    mk outer_chc.conc hyps phi
+    construct outer_chc.conc hyps phi
 
   let disjoin chcs =
     match chcs with
@@ -1040,7 +1040,7 @@ module Chc = struct
              new_chc.fmla) 
           old_chcs in
       let new_phi = Syntax.mk_or srk (chc1.fmla::new_phis) in
-      mk chc1.conc chc1.hyps new_phi
+      construct chc1.conc chc1.hyps new_phi
 
   let subst_equating_globally chc subst_map = 
     let sub_policy atom =
@@ -1064,7 +1064,7 @@ module Chc = struct
               let sym = new_sym atom arg_num in
               Syntax.mk_const srk sym)
           atom.args in
-        Atom.mk atom.pred_num new_args in
+        Atom.construct atom.pred_num new_args in
     let tgt_conc = Some (atom_with_new_syms chc.conc) in
     let tgt_hyps = List.map
       (fun hyp -> Some (atom_with_new_syms hyp))
@@ -1087,23 +1087,28 @@ module Chc = struct
               let sym = new_sym atom arg_num in
               Syntax.mk_const srk sym)
           atom.args in
-        Atom.mk atom.pred_num new_args in
+        Atom.construct atom.pred_num new_args in
     let tgt_conc = Some (atom_with_new_syms chc.conc) in
     let tgt_hyps = List.map
       (fun hyp -> Some (atom_with_new_syms hyp))
       chc.hyps in
     freshen_and_equate_args chc tgt_conc tgt_hyps
 
-  let print ?(level=`info) srk rule = 
-    let (conc_pred, hyp_preds, phi) = rule in
+  let symbol_of_arg ?(errormsg="fresh_symbols_for_args did not do its job") arg = 
+    match Syntax.destruct srk arg with
+    | `Var (v, `TyInt) -> Syntax.symbol_of_int v
+    | _ -> failwith errormsg
+
+  let print ?(level=`info) srk chc = 
+    (*let (conc_pred, hyp_preds, phi) = rule in*)
     logf_noendl ~level "{ @[";
     List.iter 
       (fun pred -> Atom.print srk pred; logf_noendl ~level ";@ ")
-      hyp_preds;
-    logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) phi;
-    Atom.print ~level srk conc_pred;
+      chc.hyps;    
+    logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) chc.fmla;
+    Atom.print ~level srk chc.conc;
     logf_noendl ~level "@] }@."
-  
+ 
   let print_as_wedge ?(level=`info) srk chc = 
     (*let (conc_pred, hyp_preds, phi) = rule in*)
     let chc = fresh_symbols_for_term_args chc in 
@@ -1115,18 +1120,113 @@ module Chc = struct
     let all_pred_args =
       List.concat
         (List.map 
-          (fun atom -> 
-            List.map 
-              (fun arg ->
-                match Syntax.destruct srk arg with
-                | `Var (v, `TyInt) -> Syntax.symbol_of_int v
-                | _ -> failwith "fresh_symbols_for_args did not do its job")
-                atom.args) all_preds) in
+          (fun atom -> List.map symbol_of_arg atom.args) all_preds) in
     let exists = (fun sym -> List.mem sym all_pred_args) in 
     let wedge = Wedge.abstract ~exists srk chc.fmla in
     logf_noendl ~level "%a@ -> " Wedge.pp wedge;
     Atom.print ~level srk chc.conc;
     logf_noendl ~level "@] }@."
+
+  let to_transition chc = 
+    let chc = fresh_symbols_for_args chc in
+    (*let (conc_pred, hyp_preds, phi) = chc in*)
+    (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
+    assert (List.length chc.hyps = 1);
+    (*let (hyp_atom_num, hyp_args) = Atom.to_tuple (List.hd hyp_atoms) in*)
+    let hyp_atom = List.hd chc.hyps in
+    assert (hyp_atom.pred_num = chc.conc.pred_num);
+    Var.reset_tables;
+    List.iter (fun arg -> Var.register_var (symbol_of_arg arg)) hyp_atom.args;
+    (* conc_args and hyp_args are lists of symbols *)
+    let transform = 
+      List.map2 
+        (fun pre post -> 
+            (let pre_sym = symbol_of_arg pre in 
+             (* pre-state as variable *)
+             (match Var.of_symbol pre_sym with
+             | Some v -> v
+             | _ -> failwith "Unregistered variable in to_transition"),
+            (* post-state is term *)
+            post
+            (* if post-state were symbol: *) (*Syntax.mk_const srk post)*)))
+        hyp_atom.args
+        chc.conc.args
+      in
+    (chc, K.construct chc.fmla transform)
+
+  (* Make a chc that corresponds to the identity transition, 
+     on the model of the given model_chc.
+     The returned chc will have the same predicate occurrences
+     as model_chc.  *)
+  let identity_chc model_chc =
+    (*let (conc_pred, hyp_preds, _) = model_chc in*)
+    (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
+    assert (List.length model_chc.hyps = 1);
+    let hyp_pred = List.hd model_chc.hyps in
+    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
+    assert (hyp_pred.pred_num = model_chc.conc.pred_num);
+    let eqs = List.fold_left2
+      (fun eqs hyp_arg conc_arg ->
+          let eq = Syntax.mk_eq srk hyp_arg conc_arg in eq::eqs)
+      [] 
+      hyp_pred.args
+      model_chc.conc.args
+    in
+    let phi = Syntax.mk_and srk eqs in
+    construct model_chc.conc model_chc.hyps phi
+  
+  let of_transition tr model_chc : t =
+    if K.is_one tr then identity_chc model_chc else
+    let post_shim = Memo.memo 
+        (fun sym -> Syntax.mk_symbol srk 
+         ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
+    let (tr_symbols, post_def) =
+      BatEnum.fold (fun (symbols, post_def) (var, term) ->
+          let pre_sym = Var.symbol_of var in
+          match get_const srk term with
+          | Some existing_post_sym ->
+            ((pre_sym,existing_post_sym)::symbols,post_def)
+          | None -> 
+            let new_post_sym = post_shim pre_sym in
+            let post_term = Syntax.mk_const srk new_post_sym in
+            ((pre_sym,new_post_sym)::symbols,(Syntax.mk_eq srk post_term term)::post_def)
+          )
+        ([], [])
+        (K.transform tr)
+    in
+    let body =
+      SrkSimplify.simplify_terms srk (Syntax.mk_and srk ((K.guard tr)::post_def))
+    in
+    (* Now, body is a formula over the pre-state and post-state variable pairs
+       found in tr_symbols.  I assume that the pre-state variables haven't changed,
+       but the post-state variables may have changed.  Because the post-state 
+       variables may have changed, I will look up each of the variables in the
+       predicate-occurrence in the hypothesis of the model rule and find the
+       (new?) post-state variable that it corresponds to, and then I'll put that 
+       variable into the predicate-occurrence in the conclusion of the rule that
+       I return.  *)
+    (*let (conc_pred, hyp_preds, _) = model_chc in*)
+    (*let (conc_pred_num, _) = Atom.to_tuple conc_pred in*)
+    assert (List.length model_chc.hyps = 1);
+    let hyp_pred = List.hd model_chc.hyps in
+    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
+    assert (hyp_pred.pred_num = model_chc.conc.pred_num);
+    let new_args = 
+      List.map 
+        (fun hyp_arg -> 
+           let hyp_var = symbol_of_arg hyp_arg in
+           let rec go pairs = 
+             match pairs with
+             | (pre_sym, post_sym)::rest -> 
+                     if hyp_var = pre_sym 
+                     then Syntax.mk_const srk post_sym 
+                     else go rest
+             | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
+                     failwith "Could not find symbol in of_transition"
+           in go tr_symbols)
+        hyp_pred.args in
+    let new_conc_pred = Atom.construct model_chc.conc.pred_num new_args in 
+    (construct new_conc_pred model_chc.hyps body)
 
 end
 
@@ -1516,13 +1616,13 @@ let build_rule_matrix scc rulemap summaries const_id =
 let analyze_query_predicate rule_matrix query_int const_id = 
   match get_matrix_element_opt rule_matrix query_int const_id with
   | None -> failwith "Missing final CHC"
-  | Some final_rule -> 
+  | Some final_chc -> 
     logf_noendl ~level:`info "Final CHC: @.  ";
-    Chc.print ~level:`info srk final_rule;
+    Chc.print ~level:`info srk final_chc;
     logf ~level:`info "";
-    let (conc, hyps, final_phi) = final_rule in
+    (*let (conc, hyps, final_phi) = final_chc in*)
     begin
-      match Wedge.is_sat srk final_phi with
+      match Wedge.is_sat srk final_chc.fmla with
       | `Sat -> logf ~level:`always "RESULT: UNKNOWN (final constraint is sat)"
       | `Unsat -> logf ~level:`always "RESULT: SAT (final constraint is unsat)"
       | `Unknown -> 
@@ -1532,14 +1632,12 @@ let analyze_query_predicate rule_matrix query_int const_id =
         begin
           logf ~level:`info "Preliminary: unknown (final constraint unknown)";
           logf ~level:`info "Retrying...";
-          let wedge = Wedge.abstract srk final_phi in
+          let wedge = Wedge.abstract srk final_chc.fmla in
           if Wedge.is_bottom wedge
           then logf ~level:`always "RESULT: SAT (final constraint is unsat)"
           else logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
         end
     end
-
-(*
 
 let eliminate_predicate rule_matrix (*query_int*) const_id p =
   (*if p = query_int then () else*)
@@ -1554,12 +1652,12 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
       logf_noendl ~level:`info "    Combined recursive CHC:@.    ";
       Chc.print ~level:`info srk combined_rec;
       (* Star it *)
-      let tr = Chc.transition_of_linked_formula combined_rec in
+      let (freshened_chc, tr) = Chc.to_transition combined_rec in
       logf_noendl ~level:`info "    As transition:@.    %a@." K.pp tr;
       let tr_star = K.star tr in 
       logf_noendl ~level:`info "    Starred:@.    %a@." K.pp tr_star;
-      let tr_star_rule = 
-        Chc.linked_formula_of_transition tr_star combined_rec in
+      (*let tr_star_rule = Chc.of_transition tr_star combined_rec in*)
+      let tr_star_rule = Chc.of_transition tr_star freshened_chc in
       logf_noendl ~level:`info "    Starred as CHC:@.    ";
       Chc.print ~level:`info srk tr_star_rule;
       (* Use substitution to apply the starred rule onto 
@@ -1590,12 +1688,14 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
             assign_matrix_element rule_matrix q r sub_rule
           | Some prev_rule ->
             let combined_rule = 
-              Chc.disjoin_linked_formulas [prev_rule; sub_rule] in
+              Chc.disjoin [prev_rule; sub_rule] in
             assign_matrix_element rule_matrix q r combined_rule));
   (* Now, set all the entries in column p to zero *)
   matrix_col_iteri rule_matrix p 
     (fun q _ _ -> remove_matrix_element rule_matrix q p)
   (* At this point, p has been eliminated from the system *)
+
+(*
 
 let make_chc_projection_and_symbols rule = 
   let (conc, hyps, _) = rule in
