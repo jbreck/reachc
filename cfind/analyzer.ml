@@ -440,26 +440,34 @@ module VarSet = BatSet.Int
 type atom_arg = Sctx.t Srk.Syntax.Term.t
 type pred_num_t = int
 (*type atom_arg_list = atom_arg list*)
-type atom_record = {
+(*type atom_record = {*)
+type atom_t = {
     pred_num:pred_num_t;
     args:atom_arg list
 }
-type atom_t = atom_record
+(*type atom_t = atom_record*)
 
 
 (*type atom_t = pred_num_t * atom_arg list*)
-type (*'a*)  chc_tuple = atom_t *
+(* type (*'a*)  chc_tuple = atom_t *
                          (atom_t list) *
                          Sctx.t Srk.Syntax.Formula.t
                          (*'a Srk.Syntax.Formula.t*)
+*)
 
-type chc_record = {
+(* type chc_record = {
     conc:atom_t;
     hyps:atom_t list;
     fmla:Sctx.t Srk.Syntax.Formula.t
-}
+} *)
 
-type linked_formula = chc_record
+(*type chc_record = chc_record*)
+
+type chc_t = {
+   conc:atom_t;
+   hyps:atom_t list;
+   fmla:Sctx.t Srk.Syntax.Formula.t
+} 
 
 module Chc = struct
 
@@ -472,7 +480,7 @@ module Chc = struct
 
     (*
     (* Using atom_tuple *)
-    let to_rec (atom:atom_tuple) : atom_record =
+    let to_rec (atom:atom_tuple) : atom_t =
       let (pred_num,args) = atom in
       {pred_num=pred_num;args=args}
 
@@ -488,11 +496,11 @@ module Chc = struct
     *)
 
     
-    (* Using atom_record *)
-    let to_rec (atom:atom_t) : atom_record =
+    (* Using atom_t *)
+    let to_rec (atom:atom_t) : atom_t =
       atom
 
-    let to_tuple (atom:atom_record) : (pred_num_t * atom_arg list) =
+    let to_tuple (atom:atom_t) : (pred_num_t * atom_arg list) =
       (atom.pred_num,atom.args)
 
     let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
@@ -503,13 +511,13 @@ module Chc = struct
 
   end
 
-  type t = linked_formula
+  type t = chc_record
 
   (* Using chc_tuple *)
-  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : linked_formula = 
+  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : chc_record = 
     (conc,hyps,fmla)
 
-  let to_tuple (chc:linked_formula) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
+  let to_tuple (chc:chc_record) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
     chc (* (conc,hyps,fmla) *)
 
   (* YYY *)
@@ -527,7 +535,7 @@ module Chc = struct
       atom.args;
     logf_noendl ~level ")"
   
-  let print_linked_formula ?(level=`info) srk rule = 
+  let print_chc_record ?(level=`info) srk rule = 
     let (conc_pred, hyp_preds, phi) = rule in
     logf_noendl ~level "{ @[";
     List.iter 
@@ -537,7 +545,7 @@ module Chc = struct
     print_atom ~level srk conc_pred;
     logf_noendl ~level "@] }@."
   
-  let print_linked_formula_as_wedge ?(level=`info) srk rule = 
+  let print_chc_record_as_wedge ?(level=`info) srk rule = 
     let (conc_pred, hyp_preds, phi) = rule in
     logf_noendl ~level "{ @[";
     List.iter 
@@ -557,16 +565,16 @@ module Chc = struct
     print_atom ~level srk conc_pred;
     logf_noendl ~level "@] }@."
 
-  let conc_atom_of_linked_formula rule = 
+  let conc_atom_of_chc_record rule = 
       let (conc_pred, hyp_preds, phi) = rule in
       conc_pred
   
-  let conc_pred_id_of_linked_formula rule = 
+  let conc_pred_id_of_chc_record rule = 
       let (conc_pred, hyp_preds, phi) = rule in
       (*let (pred_num, args) = Atom.to_tuple conc_pred in*)
       conc_pred.pred_num
   
-  let hyp_pred_ids_of_linked_formula rule = 
+  let hyp_pred_ids_of_chc_record rule = 
       let (conc_pred, hyp_preds, phi) = rule in
       List.map 
         (fun atom ->
@@ -575,7 +583,7 @@ module Chc = struct
           atom.pred_num)
         hyp_preds
 
-  let transition_of_linked_formula rule = 
+  let transition_of_chc_record rule = 
       let (conc_pred, hyp_preds, phi) = rule in
       (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
       assert (List.length hyp_preds = 1);
@@ -592,7 +600,7 @@ module Chc = struct
                (match Var.of_symbol pre with
                | Some v -> v
                | _ -> failwith 
-                  "Unregistered variable in transition_of_linked_formula"),
+                  "Unregistered variable in transition_of_chc_record"),
               (* post-state as term *)
               Syntax.mk_const srk post))
           hyp_pred.args
@@ -604,7 +612,7 @@ module Chc = struct
      on the model of the given model_rule.
      The returned rule will have the same predicate occurrences
      as model_rule.  *)
-  let identity_linked_formula model_rule =
+  let identity_chc_record model_rule =
     let (conc_pred, hyp_preds, _) = model_rule in
     (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
     assert (List.length hyp_preds = 1);
@@ -624,8 +632,8 @@ module Chc = struct
     let phi = Syntax.mk_and srk eq_atoms in
     (conc_pred, hyp_preds, phi)
   
-  let linked_formula_of_transition tr model_rule =
-    if K.is_one tr then identity_linked_formula model_rule else
+  let chc_record_of_transition tr model_rule =
+    if K.is_one tr then identity_chc_record model_rule else
     let post_shim = Memo.memo 
         (fun sym -> Syntax.mk_symbol srk 
          ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
@@ -668,7 +676,7 @@ module Chc = struct
              | (pre_sym, post_sym)::rest -> 
                      if hyp_var = pre_sym then post_sym else go rest
              | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
-                     failwith "Could not find symbol in linked_formula_of_transition"
+                     failwith "Could not find symbol in chc_record_of_transition"
            in go tr_symbols)
         hyp_pred.args in
     let new_conc_pred = Atom.of_tuple (conc_pred.pred_num, new_args) in 
@@ -817,14 +825,14 @@ module Chc = struct
         let phi = substitute_args_pred pred1 pred2 phi in 
         go more_preds1 more_preds2 phi
       | ([],[]) -> phi
-      | _ -> failwith "Unequal-length predicate lists in disjoin_linked_formulas"
+      | _ -> failwith "Unequal-length predicate lists in disjoin_chc_records"
       in
     let phi2 = go hyp_preds1 hyp_preds2 phi2 in
     (conc_pred1, hyp_preds1, phi2)
   
-  let disjoin_linked_formulas rules =
+  let disjoin_chc_records rules =
     match rules with
-    | [] -> failwith "Empty rule list in disjoin_linked_formulas"
+    | [] -> failwith "Empty rule list in disjoin_chc_records"
     | [rule1] -> rule1
     | rule1::old_rules ->
       let (conc_pred1, hyp_preds1, phi1) = rule1 in
@@ -842,7 +850,7 @@ module Chc = struct
   
   let subst_all outer_rule inner_rule =
     (*Format.printf "  ~~Inner rule initially:@.    ";
-    print_linked_formula srk inner_rule;
+    print_chc_record srk inner_rule;
     Format.printf "@.";*)
     let (outer_conc, outer_hyps, outer_phi) = outer_rule in
     let (inner_conc, inner_hyps, inner_phi) = inner_rule in
@@ -866,7 +874,7 @@ module Chc = struct
           let new_phi = substitute_args_pred outer_hyp inner_conc inner_phi in
           let new_rule = (outer_hyp, inner_hyps, new_phi) in
           (*Format.printf "  ~~Rule after substitute_args_pred and before fresh_skolem:@.    ";
-          print_linked_formula srk new_rule;
+          print_chc_record srk new_rule;
           Format.printf "@.";*)
           let (new_conc, subbed_hyps, new_phi) = 
             fresh_skolem_except new_rule [outer_hyp] in  
@@ -888,17 +896,17 @@ module Chc = struct
 *)
     (* End big comment-out *)
  
-  module Atom = struct
+ module Atom = struct
     (* atom, i.e., predicate occurrence *)
     type t = atom_t
     (*type atom_tuple = atom_t*)
     type atom_tuple = pred_num_t * atom_arg list
 
-    (* Using atom_record *)
-    let to_rec (atom:atom_t) : atom_record =
+    (* Using atom_t *)
+    let to_rec (atom:atom_t) : atom_t =
       atom
 
-    let to_tuple (atom:atom_record) : (pred_num_t * atom_arg list) =
+    let to_tuple (atom:atom_t) : (pred_num_t * atom_arg list) =
       (atom.pred_num,atom.args)
 
     let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
@@ -923,30 +931,30 @@ module Chc = struct
 
   end
 
-  type t = linked_formula
+  (*type chc_t = t*)
 
   (*
   (* Using chc_tuple *)
-  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : linked_formula = 
+  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : chc_t = 
     (conc,hyps,fmla)
 
-  let to_tuple (chc:linked_formula) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
+  let to_tuple (chc:chc_t) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
     chc (* (conc,hyps,fmla) *)
   *)
 
-  (* Using chc_record *)
-  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : linked_formula = 
+  (* Using chc_t *)
+  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : chc_t = 
     {conc=conc;hyps=hyps;fmla=fmla}
 
-  let construct (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : linked_formula = 
+  let construct (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : chc_t = 
     {conc=conc;hyps=hyps;fmla=fmla}
 
-  let to_tuple (chc:linked_formula) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
+  let to_tuple (chc:chc_t) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
     (chc.conc,chc.hyps,chc.fmla) (* (conc,hyps,fmla) *)
 
   (*let equate_two_args arg1 arg2 = Syntax.mk_eq srk arg1 arg2*)
   
-  let linked_formula_has_hyp chc target_hyp_num = 
+  let chc_has_hyp chc target_hyp_num = 
     List.fold_left 
       (fun running hyp -> 
          (running || (hyp.pred_num = target_hyp_num)))
@@ -1177,7 +1185,7 @@ module Chc = struct
     let phi = Syntax.mk_and srk eqs in
     construct model_chc.conc model_chc.hyps phi
   
-  let of_transition tr model_chc : t =
+  let of_transition tr model_chc : chc_t =
     if K.is_one tr then identity_chc model_chc else
     let post_shim = Memo.memo 
         (fun sym -> Syntax.mk_symbol srk 
@@ -1232,7 +1240,7 @@ module Chc = struct
 
 end
 
-let build_linked_formulas srk1 srk2 phi query_pred =
+let build_chc_records srk1 srk2 phi query_pred =
   let rec get_rule vars rules phi = 
     match Syntax.destruct srk1 phi with
     | `Quantify (`Forall, nam, typ, expr) ->
@@ -1266,7 +1274,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
     Syntax.mk_symbol srk2 ~name:name `TyBool
     in
   let rename_pred = Memo.memo rename_pred_internal in
-  let linked_formula_of_rule (hyp,conc,vars) = 
+  let chc_record_of_rule (hyp,conc,vars) = 
     let var_to_skolem_internal var = 
       (let (name, typ) = List.nth vars var in
       match typ with 
@@ -1493,7 +1501,7 @@ let build_linked_formulas srk1 srk2 phi query_pred =
     (Chc.construct conc_atom hyp_preds phi)
     (* *)
   in
-  List.map linked_formula_of_rule rules
+  List.map chc_record_of_rule rules
 
 let new_empty_matrix () = ref IntPairMap.empty
 
@@ -1557,7 +1565,7 @@ let subst_summaries chcs summaries =
           (*let (pred_num, args) = Chc.Atom.to_tuple hyp in*)
           if BatMap.Int.mem hyp.pred_num summaries then
             let pred_summary = BatMap.Int.find hyp.pred_num summaries in
-            (if Chc.linked_formula_has_hyp rule_inprog hyp.pred_num then
+            (if Chc.chc_has_hyp rule_inprog hyp.pred_num then
               Chc.subst_all rule_inprog pred_summary
             else rule_inprog)
           else 
@@ -1726,7 +1734,7 @@ let make_chc_projection_and_symbols chc =
      attach it to the list of hypothesis predicate occurrences, and combine
      it with the constraint formula from info_structure to obtain the desired
      CHC. *)
-let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (linked_formula * Chc.Atom.t) =
+let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (chc_t * Chc.Atom.t) =
     let bounding_symbol_list = List.map
       (fun (sym, corresponding_term) -> Srk.Syntax.mk_const srk sym)
       info_structure.ChoraCHC.bound_pairs in 
@@ -1737,7 +1745,7 @@ let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (linked_form
     (Chc.construct fact_atom [new_atom] info_structure.call_abstraction_fmla,
      new_atom)
 
-let make_final_summary_chc summary_fmla fact_atom : (*'a*) linked_formula =
+let make_final_summary_chc summary_fmla fact_atom : (*'a*) chc_t =
     Chc.construct fact_atom [] summary_fmla
 
 let summarize_nonlinear_scc scc rulemap summaries = 
@@ -1894,7 +1902,7 @@ let handle_query_predicate scc rulemap summaries query_int =
   logf ~level:`info "Analysis of query predicate:@.";
   let const_id = -1 in
   let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
-  (* The above call boils down to one disjoin_linked_formulas call *)
+  (* The above call boils down to one disjoin_chc_ts call *)
   analyze_query_predicate rule_matrix query_int const_id
 
 let analyze_scc finished_flag summaries rulemap query_int scc =
@@ -1926,8 +1934,8 @@ let print_summaries summaries =
 let analyze_ruleset chcs query_int = 
   let callgraph = List.fold_left
     (fun graph chc ->
-      (*let conc_pred_id = Chc.conc_pred_id_of_linked_formula chc in
-      let hyp_pred_ids = Chc.hyp_pred_ids_of_linked_formula chc in*)
+      (*let conc_pred_id = Chc.conc_pred_id_of_chc_t chc in
+      let hyp_pred_ids = Chc.hyp_pred_ids_of_chc_t chc in*)
       List.fold_left
         (fun g p -> CallGraph.add_edge g chc.conc.pred_num p)
         graph
@@ -1937,7 +1945,7 @@ let analyze_ruleset chcs query_int =
   in
   let rulemap = List.fold_left
     (fun rulemap chc ->
-      (*let conc_pred_id = Chc.conc_pred_id_of_linked_formula chc in*)
+      (*let conc_pred_id = Chc.conc_pred_id_of_chc_t chc in*)
       BatMap.Int.add
         chc.conc.pred_num
         (chc::(BatMap.Int.find_default [] chc.conc.pred_num rulemap))
@@ -1963,7 +1971,7 @@ let analyze_smt2 filename =
   let phi = SrkZ3.load_smtlib2 ~context:z3ctx parsingCtx str in
   let query_sym = Syntax.mk_symbol srk ~name:"QUERY" `TyBool in
   let query_int = Syntax.int_of_symbol query_sym in  
-  let chcs = build_linked_formulas parsingCtx srk phi query_int in 
+  let chcs = build_chc_records parsingCtx srk phi query_int in 
   List.iter 
     (fun chc -> 
         logf_noendl ~level:`info "Incoming CHC: @.  ";
