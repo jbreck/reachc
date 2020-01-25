@@ -435,11 +435,11 @@ let logf_noendl ?(level=`info) =
 
 module VarSet = BatSet.Int
 
-type atom_arg = Sctx.t Srk.Syntax.Term.t
+type atom_arg_t = Sctx.t Srk.Syntax.Term.t
 type pred_num_t = int
 type atom_t = {
     pred_num:pred_num_t;
-    args:atom_arg list
+    args:atom_arg_t list
 }
 
 type chc_t = {
@@ -455,11 +455,7 @@ module Chc = struct
     (* atom, i.e., predicate occurrence *)
     type t = atom_t
 
-    (* Using atom_t *)
-    let to_rec (atom:atom_t) : atom_t =
-      atom
-
-    let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
+    let construct (pred_num:pred_num_t) (args:atom_arg_t list) : atom_t = 
       {pred_num=pred_num;args=args}
 
     let print ?(level=`info) srk atom = 
