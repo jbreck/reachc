@@ -1009,6 +1009,22 @@ let build_chc_records srk1 srk2 phi query_pred =
   in
   List.map chc_record_of_rule rules
 
+let print_scc ?(level=`info) scc = 
+  logf_noendl ~level "SCC: [";
+  List.iter
+    (fun p -> 
+      logf_noendl ~level "%a,"
+      (Syntax.pp_symbol srk)
+      (Syntax.symbol_of_int p))
+    scc;
+  logf_noendl ~level "]@."
+
+let print_condensed_graph ?(level=`info) callgraph_sccs = 
+  logf ~level "SCC list in processing order:";
+  List.iter print_scc callgraph_sccs
+
+(* ******************** Linear CHC Solving ************************** *)
+
 let new_empty_matrix () = ref IntPairMap.empty
 
 let assign_matrix_element matrix rowid colid value = 
@@ -1045,20 +1061,6 @@ let matrix_col_iteri matrix colid func =
       if colid' != colid then () else
       func rowid' colid value)
     !matrix;;
-
-let print_scc ?(level=`info) scc = 
-  logf_noendl ~level "SCC: [";
-  List.iter
-    (fun p -> 
-      logf_noendl ~level "%a,"
-      (Syntax.pp_symbol srk)
-      (Syntax.symbol_of_int p))
-    scc;
-  logf_noendl ~level "]@."
-
-let print_condensed_graph ?(level=`info) callgraph_sccs = 
-  logf ~level "SCC list in processing order:";
-  List.iter print_scc callgraph_sccs
 
 (* Substitute summaries of lower SCCs into this predicate's rules *)
 let subst_summaries chcs summaries =
@@ -1207,6 +1209,25 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
     (fun q _ _ -> remove_matrix_element rule_matrix q p)
   (* At this point, p has been eliminated from the system *)
 
+let summarize_linear_scc scc rulemap summaries = 
+  logf ~level:`info "SCC: linear@.";
+  let const_id = (* (List.hd (List.sort compare scc)) *) -1 in
+  assert (not (List.mem const_id scc));
+  let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
+  (* Now, eliminate predicates from this SCC one at a time*)
+  logf ~level:`info "  Eliminating predicates";
+  List.iter (eliminate_predicate rule_matrix (*query_int*) const_id) scc;
+  (* The remaining matrix entries are summaries; 
+     they have no hypothesis predicate occurrences *)
+  List.iter
+    (fun p ->
+      match get_matrix_element_opt rule_matrix p const_id with
+      | None -> failwith "Missing const_id entry in rule_matrix"
+      | Some rule -> summaries := (BatMap.Int.add p rule !summaries)) 
+    scc
+
+(* ****************** Non-linear CHC Solving ************************ *)
+
 let make_chc_projection_and_symbols chc = 
   let atoms = chc.conc::chc.hyps in
   let sym_list = List.fold_left
@@ -1348,29 +1369,14 @@ let detect_linear_scc scc rulemap summaries =
     true
     scc
 
-let summarize_linear_scc scc rulemap summaries = 
-  logf ~level:`info "SCC: linear@.";
-  let const_id = (* (List.hd (List.sort compare scc)) *) -1 in
-  assert (not (List.mem const_id scc));
-  let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
-  (* Now, eliminate predicates from this SCC one at a time*)
-  logf ~level:`info "  Eliminating predicates";
-  List.iter (eliminate_predicate rule_matrix (*query_int*) const_id) scc;
-  (* The remaining matrix entries are summaries; 
-     they have no hypothesis predicate occurrences *)
-  List.iter
-    (fun p ->
-      match get_matrix_element_opt rule_matrix p const_id with
-      | None -> failwith "Missing const_id entry in rule_matrix"
-      | Some rule -> summaries := (BatMap.Int.add p rule !summaries)) 
-    scc
-
 let handle_query_predicate scc rulemap summaries query_int = 
   logf ~level:`info "Analysis of query predicate:@.";
   let const_id = -1 in
   let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
   (* The above call boils down to one disjoin_chc_ts call *)
   analyze_query_predicate rule_matrix query_int const_id
+
+(* ********************* Analyzer ************************* *)
 
 let analyze_scc finished_flag summaries rulemap query_int scc =
   if !finished_flag then () else
