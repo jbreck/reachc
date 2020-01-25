@@ -433,35 +433,14 @@ let logf_noendl ?(level=`info) =
   then Format.fprintf sf
   else Format.ifprintf sf
 
-
 module VarSet = BatSet.Int
 
-(*type atom_arg = Srk.Syntax.Symbol.t*)
 type atom_arg = Sctx.t Srk.Syntax.Term.t
 type pred_num_t = int
-(*type atom_arg_list = atom_arg list*)
-(*type atom_record = {*)
 type atom_t = {
     pred_num:pred_num_t;
     args:atom_arg list
 }
-(*type atom_t = atom_record*)
-
-
-(*type atom_t = pred_num_t * atom_arg list*)
-(* type (*'a*)  chc_tuple = atom_t *
-                         (atom_t list) *
-                         Sctx.t Srk.Syntax.Formula.t
-                         (*'a Srk.Syntax.Formula.t*)
-*)
-
-(* type chc_record = {
-    conc:atom_t;
-    hyps:atom_t list;
-    fmla:Sctx.t Srk.Syntax.Formula.t
-} *)
-
-(*type chc_record = chc_record*)
 
 type chc_t = {
    conc:atom_t;
@@ -471,446 +450,17 @@ type chc_t = {
 
 module Chc = struct
 
-  (*
   module Atom = struct
+
     (* atom, i.e., predicate occurrence *)
     type t = atom_t
-    (*type atom_tuple = atom_t*)
-    type atom_tuple = pred_num_t * atom_arg list
-
-    (*
-    (* Using atom_tuple *)
-    let to_rec (atom:atom_tuple) : atom_t =
-      let (pred_num,args) = atom in
-      {pred_num=pred_num;args=args}
-
-    let to_tuple (atom:atom_tuple) : (pred_num_t * atom_arg list) =
-      atom
-
-    let of_tuple ((pred:pred_num_t), (args:atom_arg list)) : atom_t = 
-      (pred, args)
-
-    let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
-      (pred_num, args)
-
-    *)
-
-    
-    (* Using atom_t *)
-    let to_rec (atom:atom_t) : atom_t =
-      atom
-
-    let to_tuple (atom:atom_t) : (pred_num_t * atom_arg list) =
-      (atom.pred_num,atom.args)
-
-    let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
-      {pred_num=pred_num;args=args}
-
-    let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
-      {pred_num=pred_num;args=args}
-
-  end
-
-  type t = chc_record
-
-  (* Using chc_tuple *)
-  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : chc_record = 
-    (conc,hyps,fmla)
-
-  let to_tuple (chc:chc_record) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
-    chc (* (conc,hyps,fmla) *)
-
-  (* YYY *)
-
-  let print_atom ?(level=`info) srk atom = 
-    (*let (pred_num, var_symbols) = Atom.to_tuple atom in *)
-    let n_args = List.length atom.args in 
-    logf_noendl ~level "%s(" 
-      (Syntax.show_symbol srk (Syntax.symbol_of_int atom.pred_num));
-    List.iteri 
-      (fun i sym ->
-        (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
-        logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;
-        if i != n_args - 1 then logf_noendl ~level ",")
-      atom.args;
-    logf_noendl ~level ")"
-  
-  let print_chc_record ?(level=`info) srk rule = 
-    let (conc_pred, hyp_preds, phi) = rule in
-    logf_noendl ~level "{ @[";
-    List.iter 
-      (fun pred -> print_atom srk pred; logf_noendl ~level ";@ ")
-      hyp_preds;
-    logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) phi;
-    print_atom ~level srk conc_pred;
-    logf_noendl ~level "@] }@."
-  
-  let print_chc_record_as_wedge ?(level=`info) srk rule = 
-    let (conc_pred, hyp_preds, phi) = rule in
-    logf_noendl ~level "{ @[";
-    List.iter 
-      (fun pred -> print_atom srk pred; logf_noendl ~level ";@ ")
-      hyp_preds;
-    let all_preds = conc_pred::hyp_preds in 
-    let all_pred_args =
-      List.concat
-        (List.map 
-          (fun atom -> 
-            (*let (pred_num,args) = Atom.to_tuple atom in 
-            args*)
-            atom.args) all_preds) in
-    let exists = (fun sym -> List.mem sym all_pred_args) in 
-    let wedge = Wedge.abstract ~exists srk phi in
-    logf_noendl ~level "%a@ -> " Wedge.pp wedge;
-    print_atom ~level srk conc_pred;
-    logf_noendl ~level "@] }@."
-
-  let conc_atom_of_chc_record rule = 
-      let (conc_pred, hyp_preds, phi) = rule in
-      conc_pred
-  
-  let conc_pred_id_of_chc_record rule = 
-      let (conc_pred, hyp_preds, phi) = rule in
-      (*let (pred_num, args) = Atom.to_tuple conc_pred in*)
-      conc_pred.pred_num
-  
-  let hyp_pred_ids_of_chc_record rule = 
-      let (conc_pred, hyp_preds, phi) = rule in
-      List.map 
-        (fun atom ->
-          (*let (pred_num, args) = Atom.to_tuple atom in
-          pred_num*)
-          atom.pred_num)
-        hyp_preds
-
-  let transition_of_chc_record rule = 
-      let (conc_pred, hyp_preds, phi) = rule in
-      (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
-      assert (List.length hyp_preds = 1);
-      (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
-      let hyp_pred = List.hd hyp_preds in
-      assert (hyp_pred.pred_num = conc_pred.pred_num);
-      Var.reset_tables;
-      List.iter (fun sym -> Var.register_var sym) hyp_pred.args;
-      (* conc_args and hyp_args are lists of symbols *)
-      let transform = 
-        List.map2 
-          (fun pre post -> 
-              ((* pre-state as variable *)
-               (match Var.of_symbol pre with
-               | Some v -> v
-               | _ -> failwith 
-                  "Unregistered variable in transition_of_chc_record"),
-              (* post-state as term *)
-              Syntax.mk_const srk post))
-          hyp_pred.args
-          conc_pred.args
-        in
-      K.construct phi transform
-
-  (* Make a rule that corresponds to the identity transition, 
-     on the model of the given model_rule.
-     The returned rule will have the same predicate occurrences
-     as model_rule.  *)
-  let identity_chc_record model_rule =
-    let (conc_pred, hyp_preds, _) = model_rule in
-    (*let (conc_pred_num, conc_args) = Atom.to_tuple conc_pred in*)
-    assert (List.length hyp_preds = 1);
-    let hyp_pred = List.hd hyp_preds in
-    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
-    assert (hyp_pred.pred_num = conc_pred.pred_num);
-    let eq_atoms = List.fold_left2
-      (fun atoms hyp_var conc_var ->
-          let atom = Syntax.mk_eq srk 
-            (Syntax.mk_const srk hyp_var) 
-            (Syntax.mk_const srk conc_var) 
-          in atom::atoms)
-      [] 
-      hyp_pred.args
-      conc_pred.args
-    in
-    let phi = Syntax.mk_and srk eq_atoms in
-    (conc_pred, hyp_preds, phi)
-  
-  let chc_record_of_transition tr model_rule =
-    if K.is_one tr then identity_chc_record model_rule else
-    let post_shim = Memo.memo 
-        (fun sym -> Syntax.mk_symbol srk 
-         ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
-    let (tr_symbols, post_def) =
-      BatEnum.fold (fun (symbols, post_def) (var, term) ->
-          let pre_sym = Var.symbol_of var in
-          match get_const srk term with
-          | Some existing_post_sym ->
-            ((pre_sym,existing_post_sym)::symbols,post_def)
-          | None -> 
-            let new_post_sym = post_shim pre_sym in
-            let post_term = Syntax.mk_const srk new_post_sym in
-            ((pre_sym,new_post_sym)::symbols,(Syntax.mk_eq srk post_term term)::post_def)
-          )
-        ([], [])
-        (K.transform tr)
-    in
-    let body =
-      SrkSimplify.simplify_terms srk (Syntax.mk_and srk ((K.guard tr)::post_def))
-    in
-    (* Now, body is a formula over the pre-state and post-state variable pairs
-       found in tr_symbols.  I assume that the pre-state variables haven't changed,
-       but the post-state variables may have changed.  Because the post-state 
-       variables may have changed, I will look up each of the variables in the
-       predicate-occurrence in the hypothesis of the model rule and find the
-       (new?) post-state variable that it corresponds to, and then I'll put that 
-       variable into the predicate-occurrence in the conclusion of the rule that
-       I return.  *)
-    let (conc_pred, hyp_preds, _) = model_rule in
-    (*let (conc_pred_num, _) = Atom.to_tuple conc_pred in*)
-    assert (List.length hyp_preds = 1);
-    let hyp_pred = List.hd hyp_preds in
-    (*let (hyp_pred_num, hyp_args) = Atom.to_tuple (List.hd hyp_preds) in*)
-    assert (hyp_pred.pred_num = conc_pred.pred_num);
-    let new_args = 
-      List.map 
-        (fun hyp_var -> 
-           let rec go pairs = 
-             match pairs with
-             | (pre_sym, post_sym)::rest -> 
-                     if hyp_var = pre_sym then post_sym else go rest
-             | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
-                     failwith "Could not find symbol in chc_record_of_transition"
-           in go tr_symbols)
-        hyp_pred.args in
-    let new_conc_pred = Atom.of_tuple (conc_pred.pred_num, new_args) in 
-    (new_conc_pred, hyp_preds, body)
-
-  (*
-  let subst_in_pred pred var_to var_from = 
-    let (pred_num, pred_args) = pred in
-    let new_args = 
-      List.map
-        (fun old_var -> if old_var = var_from then var_to else old_var)
-        pred_args in
-    (pred_num, new_args)
-  
-  let subst_in_preds preds var_to var_from = 
-    List.map
-      (fun pred -> subst_in_pred pred var_to var_from)
-      preds
-  *)
-
-  let make_args_unique rule = 
-    let (conc_pred, hyp_preds, phi) = rule in 
-    let all_preds = conc_pred::hyp_preds in 
-    let used_args = ref Syntax.Symbol.Set.empty in 
-    let pairs = ref [] in 
-    let make_args_unique_in_pred pred = 
-      (*let (pred_num, pred_args) = Atom.to_tuple pred in *)
-      let rec go pred_args = 
-        match pred_args with 
-        | pred_var::rest -> 
-          let replaced_args = go rest in 
-          if Syntax.Symbol.Set.mem pred_var !used_args 
-          then 
-            let new_var = 
-              Syntax.mk_symbol srk 
-                ~name:("Dedup_"^(Syntax.show_symbol srk pred_var)) 
-                `TyInt in 
-            pairs := (pred_var,new_var)::(!pairs); 
-            new_var::replaced_args
-          else 
-           (used_args := Syntax.Symbol.Set.add pred_var !used_args;
-            pred_var::replaced_args)
-        | [] ->
-          pred_args
-      in
-      Atom.of_tuple (pred.pred_num, go pred.args)
-    in
-    let new_preds = List.map make_args_unique_in_pred all_preds in
-    match new_preds with
-    | new_conc_pred :: new_hyp_preds ->
-      let equalities = 
-        List.map
-          (fun (old_var,new_var) ->
-             let old_c = Syntax.mk_const srk old_var in
-             let new_c = Syntax.mk_const srk new_var in
-             Syntax.mk_eq srk old_c new_c) 
-          !pairs in
-      let new_phi = Syntax.mk_and srk (phi::equalities) in 
-      (new_conc_pred, new_hyp_preds, new_phi)
-    | _ -> failwith "Should not happen"
-
-
-  (** Given a formula phi and two predicate occurrences atom1 and atom2,
-   *    of the form atom1(v_1,...,v_n)
-   *            and atom2(w_1,...,w_n)
-   *    substitute each occurrence of w_i with v_i in phi *)
-  let substitute_args_pred atom1 atom2 phi = 
-    (*Format.printf "  ~~ ~~  To-predicate:";
-    print_atom srk atom1;
-    Format.printf "@.";
-    Format.printf "  ~~ ~~From-predicate:";
-    print_atom srk atom2;
-    Format.printf "@.";*)
-    (*let (pred_num1, vs) = Atom.to_tuple atom1 in
-      let (pred_num2, ws) = Atom.to_tuple atom2 in*)
-    assert (atom1.pred_num = atom2.pred_num);
-    let sub sym = 
-      let rec go list1 list2 =
-        match (list1,list2) with
-        | (vi::vrest,wi::wrest) ->
-          if sym = wi
-          then Syntax.mk_const srk vi
-          else go vrest wrest
-        | ([],[]) -> Syntax.mk_const srk sym
-        | _ -> failwith "Unequal-length variable lists in substitute_args"
-      in go atom1.args atom2.args
-      in
-    let new_phi = Syntax.substitute_const srk sub phi in
-    (*Format.printf "  ~~ ~~Formula before: %a@." (Syntax.Formula.pp srk) phi;
-    Format.printf "  ~~ ~~Formula  after: %a@." (Syntax.Formula.pp srk) new_phi;*)
-    new_phi
-  
-  (** Replace all skolem constants appearing in rule 
-   *    with fresh skolem constants, except for those
-   *    appearing in the given list of predicate occurrences *)
-  let fresh_skolem_except rule atoms =
-    let keep = 
-      List.fold_left 
-        (fun keep atom ->
-          (*let (pred_num, args) = Atom.to_tuple atom in*)
-          List.fold_left
-            (fun keep sym ->
-               BatSet.Int.add (Syntax.int_of_symbol sym) keep)
-            keep
-            atom.args)
-        BatSet.Int.empty
-        atoms in
-    let fresh_skolem =
-      Memo.memo 
-        (fun sym ->
-          let name = name_of_symbol srk sym in
-          let typ = Syntax.typ_symbol srk sym in
-          Syntax.mk_symbol srk ~name typ) in
-    let map_symbol sym = 
-      if BatSet.Int.mem (Syntax.int_of_symbol sym) keep 
-      then sym 
-      else fresh_skolem sym in
-    let freshen_atom atom = 
-      (*let (pred_num, args) = Atom.to_tuple atom in*)
-      let new_args = List.map map_symbol atom.args in 
-      Atom.of_tuple (atom.pred_num, new_args) in
-    let (conc_pred, hyp_preds, phi) = rule in
-    let new_conc_pred = freshen_atom conc_pred in
-    let new_hyp_preds = List.map freshen_atom hyp_preds in
-    let map_symbol_const sym = 
-      Syntax.mk_const srk (map_symbol sym) in
-    let new_phi = Syntax.substitute_const srk map_symbol_const phi in
-    (new_conc_pred, new_hyp_preds, new_phi)
-  
-  (* Given two CHCs rule1 and rule2 that have the same conclusion predicate and 
-   *   the same list of hypothesis predicates, rewrite rule2 to use the same
-   *   variable names used by rule1 *)
-  let substitute_args_rule rule1 rule2 = 
-    let (conc_pred1, hyp_preds1, phi1) = rule1 in
-    let (conc_pred2, hyp_preds2, phi2) = rule2 in
-    (*let (conc_pred_num1, _) = Atom.to_tuple conc_pred1 in
-      let (conc_pred_num2, _) = Atom.to_tuple conc_pred2 in*)
-    assert (conc_pred1.pred_num = conc_pred2.pred_num);
-    let phi2 = substitute_args_pred conc_pred1 conc_pred2 phi2 in
-    (* Note: the following asserts that the two hypothesis predicate 
-         occurrence lists have the same order, which isn't strictly necessary *)
-    let rec go preds1 preds2 phi =
-      match (preds1,preds2) with
-      | (pred1::more_preds1,pred2::more_preds2) ->
-        (* The following call asserts that pred1 = pred2 *)
-        let phi = substitute_args_pred pred1 pred2 phi in 
-        go more_preds1 more_preds2 phi
-      | ([],[]) -> phi
-      | _ -> failwith "Unequal-length predicate lists in disjoin_chc_records"
-      in
-    let phi2 = go hyp_preds1 hyp_preds2 phi2 in
-    (conc_pred1, hyp_preds1, phi2)
-  
-  let disjoin_chc_records rules =
-    match rules with
-    | [] -> failwith "Empty rule list in disjoin_chc_records"
-    | [rule1] -> rule1
-    | rule1::old_rules ->
-      let (conc_pred1, hyp_preds1, phi1) = rule1 in
-      (* FIXME: Should rewrite rule1 first so that it has no duplicate
-         occurrences of variables in its predicates *)
-      let new_phis = 
-        List.map 
-          (fun old_rule -> 
-             let new_rule = substitute_args_rule rule1 old_rule in
-             let new_rule = fresh_skolem_except new_rule (conc_pred1::hyp_preds1) in
-             let (_,_, new_phi) = new_rule in
-             new_phi)
-          old_rules in
-      (conc_pred1, hyp_preds1, Syntax.mk_or srk (phi1::new_phis))
-  
-  let subst_all outer_rule inner_rule =
-    (*Format.printf "  ~~Inner rule initially:@.    ";
-    print_chc_record srk inner_rule;
-    Format.printf "@.";*)
-    let (outer_conc, outer_hyps, outer_phi) = outer_rule in
-    let (inner_conc, inner_hyps, inner_phi) = inner_rule in
-    (*let (inner_conc_pred_num, _) = Atom.to_tuple inner_conc in*)
-    let (outer_hyps_matching, outer_hyps_non_matching) = 
-      List.partition
-        (fun atom ->
-          (*let (pred_num, args) = Atom.to_tuple atom in*)
-          (atom.pred_num = inner_conc.pred_num))
-        outer_hyps
-      in
-    (if List.length outer_hyps_matching = 0 
-    then failwith "Mismatched subst_all call"
-    else ());
-    let (new_hyps, new_phis) = 
-      List.fold_left
-        (fun (hyps,phis) outer_hyp -> 
-          (*Format.printf "  ~~Substituting for one outer hypothesis...@.";*)
-          (*let (outer_hyp_pred_num, outer_hyp_args) = Atom.to_tuple outer_hyp in*)
-          assert (outer_hyp.pred_num = inner_conc.pred_num);
-          let new_phi = substitute_args_pred outer_hyp inner_conc inner_phi in
-          let new_rule = (outer_hyp, inner_hyps, new_phi) in
-          (*Format.printf "  ~~Rule after substitute_args_pred and before fresh_skolem:@.    ";
-          print_chc_record srk new_rule;
-          Format.printf "@.";*)
-          let (new_conc, subbed_hyps, new_phi) = 
-            fresh_skolem_except new_rule [outer_hyp] in  
-          (subbed_hyps @ hyps, new_phi::phis))
-        ([],[])
-        outer_hyps_matching
-      in
-    let phi = Syntax.mk_and srk (outer_phi::new_phis) in
-    let hyps = outer_hyps_non_matching @ new_hyps in
-    (outer_conc, hyps, phi)
-
-
-  
-  (* New CHC routines *)
-
-    (* ZZZ *)
-
-
-*)
-    (* End big comment-out *)
- 
- module Atom = struct
-    (* atom, i.e., predicate occurrence *)
-    type t = atom_t
-    (*type atom_tuple = atom_t*)
-    type atom_tuple = pred_num_t * atom_arg list
 
     (* Using atom_t *)
     let to_rec (atom:atom_t) : atom_t =
       atom
 
-    let to_tuple (atom:atom_t) : (pred_num_t * atom_arg list) =
-      (atom.pred_num,atom.args)
-
-    let of_tuple ((pred_num:pred_num_t), (args:atom_arg list)) : atom_t = 
-      {pred_num=pred_num;args=args}
+    (*let to_tuple (atom:atom_t) : (pred_num_t * atom_arg list) =
+      (atom.pred_num,atom.args)*)
 
     let construct (pred_num:pred_num_t) (args:atom_arg list) : atom_t = 
       {pred_num=pred_num;args=args}
@@ -931,29 +481,12 @@ module Chc = struct
 
   end
 
-  (*type chc_t = t*)
-
-  (*
-  (* Using chc_tuple *)
-  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : chc_t = 
-    (conc,hyps,fmla)
-
-  let to_tuple (chc:chc_t) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
-    chc (* (conc,hyps,fmla) *)
-  *)
-
-  (* Using chc_t *)
-  let of_tuple ((conc:atom_t),(hyps:atom_t list),(fmla:Sctx.t Srk.Syntax.Formula.t)) : chc_t = 
-    {conc=conc;hyps=hyps;fmla=fmla}
-
   let construct (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : chc_t = 
     {conc=conc;hyps=hyps;fmla=fmla}
 
-  let to_tuple (chc:chc_t) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
-    (chc.conc,chc.hyps,chc.fmla) (* (conc,hyps,fmla) *)
+  (*let to_tuple (chc:chc_t) : atom_t * atom_t list * (Sctx.t Srk.Syntax.Formula.t) = 
+    (chc.conc,chc.hyps,chc.fmla) *)
 
-  (*let equate_two_args arg1 arg2 = Syntax.mk_eq srk arg1 arg2*)
-  
   let chc_has_hyp chc target_hyp_num = 
     List.fold_left 
       (fun running hyp -> 
@@ -981,7 +514,7 @@ module Chc = struct
     let new_conc_atom = freshen_atom chc.conc in
     let new_hyp_atoms = List.map freshen_atom chc.hyps in
     let new_phi = freshen_expr chc.fmla in
-    of_tuple (new_conc_atom, new_hyp_atoms, new_phi)
+    construct new_conc_atom new_hyp_atoms new_phi
 
   let freshen_and_equate_args chc tgt_conc_atom tgt_hyp_atom_list = 
     let chc = fresh_skolem_all chc in
@@ -1083,7 +616,6 @@ module Chc = struct
     let new_sym atom arg_num = 
         let arg = List.nth atom.args arg_num in 
         match Syntax.destruct srk arg with
-        (*| `Var (v, `TyInt) -> (Syntax.symbol_of_int v)*)
         | `App (func, f_args) when f_args = [] -> func
         | _ -> (* predicate argument term that isn't a var *)
           let name = 
@@ -1105,7 +637,6 @@ module Chc = struct
 
   let symbol_of_arg ?(errormsg="fresh_symbols_for_args did not do its job") arg = 
     match Syntax.destruct srk arg with
-    (*| `Var (v, `TyInt) -> Syntax.symbol_of_int v*)
     | `App (func, args) when args = [] -> func
     | _ -> failwith errormsg
 
@@ -1373,7 +904,7 @@ let build_chc_records srk1 srk2 phi query_pred =
               in
             let argsymbols = accum_arg_info args [] in
             let argterms = List.map (fun sym -> Syntax.mk_const srk2 sym) argsymbols in
-            let atom = Chc.Atom.of_tuple (fnumber, (List.rev argterms)) in
+            let atom = Chc.Atom.construct fnumber (List.rev argterms) in
             mut_predicates := atom :: !mut_predicates;
             Syntax.mk_true srk2
           (* Recursive nodes: bool from something *)
@@ -1477,7 +1008,7 @@ let build_chc_records srk1 srk2 phi query_pred =
       | [] -> 
         if (not (is_syntactic_false srk2 conc_sub))
         then failwith "Unrecognized rule format (Non-false non-predicate conclusion)"
-        else Chc.Atom.of_tuple (query_pred, [])
+        else Chc.Atom.construct query_pred []
       | _ -> failwith "Unrecognized rule format (Multiple conclusion predicate)"
     in 
     let eqs = hyp_eqs @ conc_eqs in
@@ -1734,7 +1265,7 @@ let make_chc_projection_and_symbols chc =
      attach it to the list of hypothesis predicate occurrences, and combine
      it with the constraint formula from info_structure to obtain the desired
      CHC. *)
-let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (chc_t * Chc.Atom.t) =
+let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (chc_t * atom_t) =
     let bounding_symbol_list = List.map
       (fun (sym, corresponding_term) -> Srk.Syntax.mk_const srk sym)
       info_structure.ChoraCHC.bound_pairs in 
@@ -1829,31 +1360,6 @@ let summarize_nonlinear_scc scc rulemap summaries =
     (fun (p,chc) -> summaries := (BatMap.Int.add p chc !summaries)) 
     summary_chc_list
 
-(* Okay, given that it is non-linear, what do you do? *)
-(* Run over all facts *)
-(* Call:
-   let hs_projection x = 
-     (let symbol_name = Srk.Syntax.show_symbol srk x in 
-     let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
-     if this_name_is_a_param_prime then 
-       ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
-     else
-       ((List.fold_left 
-           (fun found (vpre,vpost) -> found || vpre == x || vpost == x) 
-           false tr_symbols)
-         || 
-         is_var_global x
-       ))
-   let bounds = ChoraCHC.make_hypothetical_summary base_case_fmla tr_symbols hs_projection
-*)
-(* Then, substitute those in *)
-(* Then, call the code that makes the height-based summaries
-  let summary_fmla_list = 
-    ChoraCHC.make_height_based_summaries
-      rec_fmla_map bounds_map depth_bound_formula_map proc_key_list height_model excepting in
-*)
-(* XXX *)
-
 let detect_linear_scc scc rulemap summaries = 
   List.fold_left (* for p in scc *)
     (fun is_linear p -> is_linear &&
@@ -1879,7 +1385,6 @@ let detect_linear_scc scc rulemap summaries =
       end)
     true
     scc
-
 
 let summarize_linear_scc scc rulemap summaries = 
   logf ~level:`info "SCC: linear@.";
