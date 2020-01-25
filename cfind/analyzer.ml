@@ -537,62 +537,6 @@ module Chc = struct
     let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
     construct new_conc new_hyps new_phi
     
-  let subst_all outer_chc inner_chc = 
-    let outer_chc = fresh_skolem_all outer_chc in
-    let (outer_hyps_matching, outer_hyps_non_matching) = 
-      List.partition
-        (fun atom -> (atom.pred_num = inner_chc.conc.pred_num))
-        outer_chc.hyps
-      in
-    (if List.length outer_hyps_matching = 0 
-    then failwith "Mismatched subst_all call"
-    else ());
-    let (new_hyps, new_phis) = 
-      List.fold_left
-        (fun (hyps, phis) outer_hyp -> 
-          assert (outer_hyp.pred_num = inner_chc.conc.pred_num);
-          let tgt_conc_atom = Some outer_hyp in
-          let tgt_hyp_atom_list = List.map (fun hyp -> None) inner_chc.hyps in
-          let new_inner_chc = 
-              freshen_and_equate_args 
-                inner_chc tgt_conc_atom tgt_hyp_atom_list in
-          (new_inner_chc.hyps @ hyps, new_inner_chc.fmla::phis))
-        ([],[])
-        outer_hyps_matching
-      in
-    let phi = Syntax.mk_and srk (outer_chc.fmla::new_phis) in
-    let hyps = outer_hyps_non_matching @ new_hyps in
-    construct outer_chc.conc hyps phi
-
-  let disjoin chcs =
-    match chcs with
-    | [] -> failwith "Empty chc list in Chc.disjoin"
-    | [chc1] -> chc1
-    | chc1::old_chcs ->
-      let chc1 = fresh_skolem_all chc1 in
-      let new_phis = 
-        List.map
-          (fun old_chc ->
-             let tgt_conc_atom = Some chc1.conc in
-             let tgt_hyp_atom_list = List.map (fun hyp -> Some hyp) chc1.hyps in
-             let new_chc = 
-               freshen_and_equate_args
-                 old_chc tgt_conc_atom tgt_hyp_atom_list in
-             new_chc.fmla) 
-          old_chcs in
-      let new_phi = Syntax.mk_or srk (chc1.fmla::new_phis) in
-      construct chc1.conc chc1.hyps new_phi
-
-  let subst_equating_globally chc subst_map = 
-    let sub_policy atom =
-        if IntMap.mem atom.pred_num subst_map 
-        then Some (IntMap.find atom.pred_num subst_map)
-        else None in
-    freshen_and_equate_args
-      chc
-      (sub_policy chc.conc)
-      (List.map sub_policy chc.hyps)
-
   let fresh_symbols_for_args chc =
     let new_sym atom arg_num = 
         let name = 
@@ -639,6 +583,63 @@ module Chc = struct
     match Syntax.destruct srk arg with
     | `App (func, args) when args = [] -> func
     | _ -> failwith errormsg
+
+  let subst_all outer_chc inner_chc = 
+    let outer_chc = fresh_skolem_all outer_chc in
+    let (outer_hyps_matching, outer_hyps_non_matching) = 
+      List.partition
+        (fun atom -> (atom.pred_num = inner_chc.conc.pred_num))
+        outer_chc.hyps
+      in
+    (if List.length outer_hyps_matching = 0 
+    then failwith "Mismatched subst_all call"
+    else ());
+    let (new_hyps, new_phis) = 
+      List.fold_left
+        (fun (hyps, phis) outer_hyp -> 
+          assert (outer_hyp.pred_num = inner_chc.conc.pred_num);
+          let tgt_conc_atom = Some outer_hyp in
+          let tgt_hyp_atom_list = List.map (fun hyp -> None) inner_chc.hyps in
+          let new_inner_chc = 
+              freshen_and_equate_args 
+                inner_chc tgt_conc_atom tgt_hyp_atom_list in
+          (new_inner_chc.hyps @ hyps, new_inner_chc.fmla::phis))
+        ([],[])
+        outer_hyps_matching
+      in
+    let phi = Syntax.mk_and srk (outer_chc.fmla::new_phis) in
+    let hyps = outer_hyps_non_matching @ new_hyps in
+    construct outer_chc.conc hyps phi
+
+  let disjoin chcs =
+    match chcs with
+    | [] -> failwith "Empty chc list in Chc.disjoin"
+    | [chc1] -> chc1
+    | chc1::old_chcs ->
+      let chc1 = fresh_skolem_all chc1 in
+      let chc1 = fresh_symbols_for_args chc1 in
+      let new_phis = 
+        List.map
+          (fun old_chc ->
+             let tgt_conc_atom = Some chc1.conc in
+             let tgt_hyp_atom_list = List.map (fun hyp -> Some hyp) chc1.hyps in
+             let new_chc = 
+               freshen_and_equate_args
+                 old_chc tgt_conc_atom tgt_hyp_atom_list in
+             new_chc.fmla) 
+          old_chcs in
+      let new_phi = Syntax.mk_or srk (chc1.fmla::new_phis) in
+      construct chc1.conc chc1.hyps new_phi
+
+  let subst_equating_globally chc subst_map = 
+    let sub_policy atom =
+        if IntMap.mem atom.pred_num subst_map 
+        then Some (IntMap.find atom.pred_num subst_map)
+        else None in
+    freshen_and_equate_args
+      chc
+      (sub_policy chc.conc)
+      (List.map sub_policy chc.hyps)
 
   let print ?(level=`info) srk chc = 
     logf_noendl ~level "{ @[";
