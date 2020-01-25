@@ -1320,6 +1320,8 @@ let summarize_nonlinear_scc scc rulemap summaries =
     (fun (p,chc) -> summaries := (BatMap.Int.add p chc !summaries)) 
     summary_chc_list
 
+(* ********************* Analyzer ************************* *)
+
 let detect_linear_scc scc rulemap summaries = 
   List.fold_left (* for p in scc *)
     (fun is_linear p -> is_linear &&
@@ -1343,8 +1345,6 @@ let detect_linear_scc scc rulemap summaries =
       end)
     true
     scc
-
-(* ********************* Analyzer ************************* *)
 
 let analyze_query_predicate rule_matrix query_int const_id = 
   match get_matrix_element_opt rule_matrix query_int const_id with
