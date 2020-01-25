@@ -1243,6 +1243,105 @@ let make_hypothetical_summary_chc info_structure fact_atom : (chc_t * atom_t) =
 let make_final_summary_chc summary_fmla fact_atom : chc_t =
     Chc.construct fact_atom [] summary_fmla
 
+let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map = 
+  logf ~level:`info "  Beginning depth-bound analysis"; 
+  let (aug_scc, pred_map) = List.fold_left 
+    (fun (aug_scc, pred_map) p ->
+       let name = "DepthAugmented_" ^ (name_of_symbol srk (Syntax.symbol_of_int p)) in
+       let int_arity =
+           1 + (List.length (List.hd (ProcMap.find p subbed_chcs_map)).conc.args) in 
+       let aug_pred = make_aux_predicate int_arity name in
+       ((Syntax.int_of_symbol aug_pred)::aug_scc, IntMap.add p aug_pred pred_map))
+    ([],IntMap.empty) 
+    scc in
+  let augment_atom atom height_term =
+    let aug_pred = IntMap.find atom.pred_num pred_map in
+    let aug_args = height_term::atom.args in
+    Chc.Atom.construct (Syntax.int_of_symbol aug_pred) aug_args in
+  let height_plus_zero = Syntax.mk_const srk height_sym in
+  let zero = Syntax.mk_real srk QQ.zero in
+  let one = Syntax.mk_real srk QQ.one in
+  let height_plus_one = Syntax.mk_add srk [height_plus_zero; one] in
+  let height_equals_zero = Syntax.mk_eq srk height_plus_zero zero in
+  let aug_rulemap = List.fold_left
+    (fun aug_rulemap orig_p ->
+        let aug_pred = IntMap.find orig_p pred_map in
+        let orig_chcs = ProcMap.find orig_p subbed_chcs_map in 
+        let (orig_facts,orig_rules) = 
+          List.partition
+            (fun chc -> (List.length chc.hyps) = 0)
+            orig_chcs
+          in
+        (* For each original fact: 
+              Pi(...) = phi
+           We get the following augmented fact:
+              DebugAugmented_Pi(H,...) = phi /\ H = 0           *)
+        let aug_facts = 
+          List.map
+            (fun orig_fact ->
+                let aug_conc = augment_atom orig_fact.conc height_plus_zero in
+                let aug_fmla = 
+                    Syntax.mk_and srk [orig_fact.fmla; height_equals_zero] in
+                Chc.construct aug_conc [] aug_fmla) 
+            orig_facts in
+        (* For each original rule: 
+              Pi(...) = psi /\ Pj1(...) /\ Pj2(...) /\ Pjk(...)
+           We get the following rules (plural):
+              DebugAugmented_Pi(H+1,...) = DebugAugmented_Pj1(H,...) /\ psi 
+              DebugAugmented_Pi(H+1,...) = DebugAugmented_Pj2(H,...) /\ psi 
+                                        ...
+              DebugAugmented_Pi(H+1,...) = DebugAugmented_Pjk(H,...) /\ psi 
+           Note that we are dropping all but one hypothesis atom to obtain
+             each of the augmented rules; this causes the variables that were
+             the arguments of the dropped atoms to become mere Skolem 
+             constants in the augmented Horn-clause SCC.  This is a very
+             imprecise abstraction; it's equivalent to Chora's use of the
+             "top" element as an abstraction of "skipped over" calls in 
+             Chora's depth-bound analysis. *)
+        let aug_rules = 
+          List.concat 
+            (List.map
+               (fun orig_rule ->
+                  List.map
+                    (fun hyp ->
+                        let aug_conc = 
+                            augment_atom orig_rule.conc height_plus_one in
+                        let new_hyp =
+                            augment_atom hyp height_plus_zero in
+                        Chc.construct aug_conc [new_hyp] orig_rule.fmla) 
+                    orig_rule.hyps)
+               orig_rules) in
+        let aug_chcs = aug_facts @ aug_rules in 
+        IntMap.add (Syntax.int_of_symbol aug_pred) aug_chcs aug_rulemap)
+    IntMap.empty
+    scc in 
+  let aug_summaries = ref IntMap.empty in
+  (* We re-use our linear-SCC-solving code for depth-bound analysis *)
+  summarize_linear_scc aug_scc aug_rulemap aug_summaries;
+  let depth_summary_map = List.fold_left
+    (fun depth_summary_map orig_p ->
+        let fact_atom = ProcMap.find orig_p fact_atom_map in
+        let aug_atom = augment_atom fact_atom height_plus_zero in
+        let aug_summary = IntMap.find aug_atom.pred_num !aug_summaries in
+        let p_subst_pred_num_map = 
+            IntMap.singleton aug_atom.pred_num aug_atom in
+        let vocab_fixup_chc = 
+            Chc.subst_equating_globally aug_summary p_subst_pred_num_map in
+        logf ~level:`info "  dbf%s:" (proc_name_string orig_p);
+        Chc.print ~level:`info srk vocab_fixup_chc; (* XXX *)
+        (* What we're returning here, for each p, is the formula of the 
+           summary of the augmented predicate DebugAugmented_Pp, with the
+           vocabularies fixed up such that the height symbol is height_sym
+           and the arguments to the conclusion atom of vocab_fixup_chc
+           match the conclusion atom of the entry in fact_atom_map for p.
+           Basically, that is a formula that bounds the height of the
+           recursion tree in terms of the arguments to Pp. *)
+        ProcMap.add orig_p vocab_fixup_chc.fmla depth_summary_map)
+    ProcMap.empty
+    scc in
+  logf ~level:`info "  Finished depth-bound analysis"; 
+  depth_summary_map
+
 let summarize_nonlinear_scc scc rulemap summaries = 
   logf ~level:`info "SCC: non-super-linear@.";
   let subbed_chcs_map = 
@@ -1297,14 +1396,18 @@ let summarize_nonlinear_scc scc rulemap summaries =
         ProcMap.add p p_vocab_fixup.fmla rec_fmla_map)
       ProcMap.empty
       scc in
-  let depth_bound_fmla_map = 
+  (*(* Trivial depth-bound summaries *)
+    let depth_bound_fmla_map = 
     List.fold_left
       (fun depth_bound_fmla_map p ->
         let depth_bound_fmla = Srk.Syntax.mk_true srk in
         ProcMap.add p depth_bound_fmla depth_bound_fmla_map)
       ProcMap.empty
-      scc in
+      scc in*)
   let height_var = make_aux_variable "H" in 
+  let height_sym = height_var.symbol in
+  let depth_bound_fmla_map = (* Non-trivial depth-bound summaries *) 
+      make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map in
   (* When changing this to use dual-height, I need to compute "excepting" *)
   let height_model = ChoraCHC.RB height_var in
   let excepting = Srk.Syntax.Symbol.Set.empty in
