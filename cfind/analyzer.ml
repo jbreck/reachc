@@ -450,6 +450,7 @@ type chc_t = {
 } 
 
 module Chc = struct
+  (* constrained horn clause *)
 
   module Atom = struct
 
@@ -474,7 +475,9 @@ module Chc = struct
 
   end
 
-  let construct (conc:atom_t) (hyps:atom_t list) (fmla:Sctx.t Srk.Syntax.Formula.t) : chc_t = 
+  let construct 
+        (conc:atom_t) (hyps:atom_t list) 
+        (fmla:Sctx.t Srk.Syntax.Formula.t) : chc_t = 
     {conc=conc;hyps=hyps;fmla=fmla}
 
   let chc_has_hyp chc target_hyp_num = 
@@ -506,6 +509,50 @@ module Chc = struct
     let new_phi = freshen_expr chc.fmla in
     construct new_conc_atom new_hyp_atoms new_phi
 
+  (* This function allows you to specify that some arguments within some
+       atom should be replaced with a fresh variable even if other arguments
+       within the same atom are not being replaced.  In contrast, 
+       freshed_and_equate_args gives less fine-grained control, because it
+       forces you to either replace all the arguments of an atom or leave
+       all the arguments of that atom un-replaced. *)
+  let freshen_and_equate_args_finegrained chc tgt_conc_atom tgt_hyp_atom_list = 
+    let chc = fresh_skolem_all chc in
+    let old_atoms = chc.conc::chc.hyps in
+    let tgt_pseudo_atoms = tgt_conc_atom::tgt_hyp_atom_list in
+    let equations = List.concat (List.map2 
+      (fun old_atom tgt_pseudo_atom ->
+          let (tgt_pred_num,tgt_args) = tgt_pseudo_atom in
+          assert (old_atom.pred_num = tgt_pred_num);
+          List.concat (List.map2 
+             (fun old_arg tgt_arg_option -> 
+                 match tgt_arg_option with
+                 | None -> []
+                 | Some new_arg -> [Syntax.mk_eq srk old_arg new_arg])
+             old_atom.args
+             tgt_args))
+      old_atoms
+      tgt_pseudo_atoms) in
+    let new_atoms = List.map2
+      (fun old_atom tgt_pseudo_atom ->
+          let (tgt_pred_num,tgt_args) = tgt_pseudo_atom in
+          let new_args = List.map2
+            (fun old_arg tgt_arg_option ->
+                match tgt_arg_option with
+                | None -> old_arg
+                | Some new_arg -> new_arg)
+            old_atom.args
+            tgt_args in
+          Atom.construct old_atom.pred_num new_args)
+      old_atoms
+      tgt_pseudo_atoms in
+    let new_conc = List.hd new_atoms in
+    let new_hyps = List.tl new_atoms in
+    let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
+    construct new_conc new_hyps new_phi
+    
+  (* Coarse-grained version *)
+  (* FIXME: coarse-grained version could be rewritten to use the
+      finegrained version *)
   let freshen_and_equate_args chc tgt_conc_atom tgt_hyp_atom_list = 
     let chc = fresh_skolem_all chc in
     let old_atoms = chc.conc::chc.hyps in
@@ -579,10 +626,58 @@ module Chc = struct
       chc.hyps in
     freshen_and_equate_args chc tgt_conc tgt_hyps
 
-  let symbol_of_arg ?(errormsg="fresh_symbols_for_args did not do its job") arg = 
-    match Syntax.destruct srk arg with
+  (* If term is exactly an occurrence of symbol s, return Some s, otherwise
+       return None *)
+  let symbol_of_term_opt term = 
+    match Syntax.destruct srk term with
+    | `App (func, args) when args = [] -> Some func
+    | _ -> None
+
+  (* If term is exactly an occurrence of symbol s, return s, otherwise
+       fail with an error message *)
+  let symbol_of_term ?(errormsg="fresh_symbols_for_args did not do its job") term = 
+    match Syntax.destruct srk term with
     | `App (func, args) when args = [] -> func
     | _ -> failwith errormsg
+
+  (* This function makes all implicit constraints explicit. 
+    
+     An example of a CHC having implicit constraints is this one:
+    
+       P(x,y,z+1) :- Q(x,w,0,z*2) /\ phi
+       
+     which implicitly constrains the first arguments of P and Q to be
+     equal, and implicitly constrains the last argument of P, minus one,
+     to be half the last argument to Q, and implicitly constrains the
+     second-to-last argument to Q to be zero, all without involving any
+     explicit constrains in phi. *)
+  let fresh_symbols_to_make_constraints_explicit chc =
+    let atoms = chc.conc::chc.hyps in
+    let seen_symbols = ref Syntax.Symbol.Set.empty in
+    let tgt_atoms = List.map
+      (fun atom ->
+          (atom.pred_num,
+           List.map
+             (fun arg ->
+                 let new_symbols = Syntax.symbols arg in
+                 let tgt_arg = 
+                   (* If we set this to None, we'll replace arg with a 
+                        fresh constant; if we set it to Some t, we'll
+                        replace arg with t.  *)
+                   if Syntax.Symbol.Set.disjoint new_symbols !seen_symbols
+                   then match symbol_of_term_opt arg with (*arg is unseen *)
+                        | None -> None (*arg is a non-const term*)
+                        | Some sym -> Some arg (*arg is an unseen const*)
+                   else (* arg has been seen already *)
+                      None in
+                 seen_symbols := 
+                     Syntax.Symbol.Set.union !seen_symbols new_symbols;
+                 tgt_arg)
+             atom.args))
+      atoms in
+    let tgt_conc_atom = List.hd tgt_atoms in
+    let tgt_hyp_atoms = List.tl tgt_atoms in
+    freshen_and_equate_args_finegrained chc tgt_conc_atom tgt_hyp_atoms
 
   let subst_all outer_chc inner_chc = 
     let outer_chc = fresh_skolem_all outer_chc in
@@ -660,7 +755,7 @@ module Chc = struct
     let all_pred_args =
       List.concat
         (List.map 
-          (fun atom -> List.map symbol_of_arg atom.args) all_preds) in
+          (fun atom -> List.map symbol_of_term atom.args) all_preds) in
     let exists = (fun sym -> List.mem sym all_pred_args) in 
     let wedge = Wedge.abstract ~exists srk chc.fmla in
     logf_noendl ~level "%a@ -> " Wedge.pp wedge;
@@ -673,12 +768,12 @@ module Chc = struct
     let hyp_atom = List.hd chc.hyps in
     assert (hyp_atom.pred_num = chc.conc.pred_num);
     Var.reset_tables;
-    List.iter (fun arg -> Var.register_var (symbol_of_arg arg)) hyp_atom.args;
+    List.iter (fun arg -> Var.register_var (symbol_of_term arg)) hyp_atom.args;
     (* conc_args and hyp_args are lists of symbols *)
     let transform = 
       List.map2 
         (fun pre post -> 
-            (let pre_sym = symbol_of_arg pre in 
+            (let pre_sym = symbol_of_term pre in 
              (* pre-state as variable *)
              (match Var.of_symbol pre_sym with
              | Some v -> v
@@ -693,8 +788,7 @@ module Chc = struct
 
   (* Make a chc that corresponds to the identity transition, 
      on the model of the given model_chc.
-     The returned chc will have the same predicate occurrences
-     as model_chc.  *)
+     The returned chc will have the same atoms as model_chc.  *)
   let identity_chc model_chc =
     assert (List.length model_chc.hyps = 1);
     let hyp_pred = List.hd model_chc.hyps in
@@ -745,7 +839,7 @@ module Chc = struct
     let new_args = 
       List.map 
         (fun hyp_arg -> 
-           let hyp_var = symbol_of_arg hyp_arg in
+           let hyp_var = symbol_of_term hyp_arg in
            let rec go pairs = 
              match pairs with
              | (pre_sym, post_sym)::rest -> 
@@ -1100,6 +1194,9 @@ let build_rule_list_matrix scc rulemap summaries const_id =
       let p_rules = subst_summaries (BatMap.Int.find p rulemap) !summaries in
       List.iter 
         (fun rule ->
+           (* I think fresh_symbols_to_make_constrains_explicit is required
+                for soundness here. *)
+           let rule = Chc.fresh_symbols_to_make_constraints_explicit rule in
            match rule.hyps with
            | [hyp] ->
              modify_def_matrix_element 
@@ -1107,17 +1204,15 @@ let build_rule_list_matrix scc rulemap summaries const_id =
            | [] ->
              modify_def_matrix_element 
                 rule_list_matrix p const_id [] (fun rs -> rule::rs)
-             (*let rs = BatMap.Int.find_default [] p !summary_list_vector in
-             summary_list_vector := BatMap.Int.add p (rule::rs) !summary_list_vector*)
-           | _ -> failwith "Non-superlinear CHC systems are not yet suppored")
+           | _ -> failwith "Non-superlinear SCCs cannot be used by this sub-system")
         p_rules) 
     scc;
   rule_list_matrix
 
+(* First build a matrix whose entries are lists of chcs. 
+   Then, disjoin the elements of each such list to produce
+     a matrix whose entries are single chcs. *)
 let build_rule_matrix scc rulemap summaries const_id = 
-  (* First build a matrix whose entries are lists of rules. 
-     Then, disjoin the elements of each such list to produce
-     a matrix whose entries are single rules. *)
   let rule_list_matrix = 
     build_rule_list_matrix scc rulemap summaries const_id in
   let rule_matrix = new_empty_matrix () in
@@ -1218,7 +1313,7 @@ let make_chc_projection_and_symbols chc =
   let atoms = chc.conc::chc.hyps in
   let sym_list = List.fold_left
     (fun running_syms atom ->
-       let syms = List.map (fun arg -> Chc.symbol_of_arg arg) atom.args in
+       let syms = List.map (fun arg -> Chc.symbol_of_term arg) atom.args in
        List.append syms running_syms)
     []
     atoms in
@@ -1358,7 +1453,13 @@ let summarize_nonlinear_scc scc rulemap summaries =
   let subbed_chcs_map = 
     List.fold_left
       (fun subbed_chcs_map p ->
-        let p_chcs = subst_summaries (BatMap.Int.find p rulemap) !summaries in
+        let p_chcs = BatMap.Int.find p rulemap in
+        (* I think fresh_symbols_to_make_constrains_explicit is required
+             for soundness here. *)
+        let p_chcs = List.map
+          (fun chc -> Chc.fresh_symbols_to_make_constraints_explicit chc)
+          p_chcs in
+        let p_chcs = subst_summaries p_chcs !summaries in
         ProcMap.add p p_chcs subbed_chcs_map)
       ProcMap.empty
       scc in 
