@@ -1485,9 +1485,10 @@ let build_linked_formulas srk1 srk2 phi query_pred =
              (Syntax.mk_real srk2 (QQ.one)))])
        bools in
     let phi = Syntax.mk_and srk2 (hyp_sub::(eqs @ bool_constraints)) in
-    let new_rule = (conc_atom, hyp_preds, phi) in 
+    (*let new_rule = (conc_atom, hyp_preds, phi) in *)
     (*(Chc.make_args_unique new_rule)*)
-    new_rule
+    (*new_rule*)
+    (Chc.construct conc_atom hyp_preds phi)
     (* *)
   in
   List.map linked_formula_of_rule rules
@@ -1695,20 +1696,18 @@ let eliminate_predicate rule_matrix (*query_int*) const_id p =
     (fun q _ _ -> remove_matrix_element rule_matrix q p)
   (* At this point, p has been eliminated from the system *)
 
-(*
-
-let make_chc_projection_and_symbols rule = 
-  let (conc, hyps, _) = rule in
-  let atoms = conc::hyps in
-  let arg_list = List.fold_left
-    (fun running_args atom ->
+let make_chc_projection_and_symbols chc = 
+  (*let (conc, hyps, _) = chc in*)
+  let atoms = chc.conc::chc.hyps in
+  let sym_list = List.fold_left
+    (fun running_syms atom ->
        (*let (_, args) = Chc.Atom.to_tuple atom in*)
-       List.append atom.args running_args)
+       let syms = List.map (fun arg -> Chc.symbol_of_arg arg) atom.args in
+       List.append syms running_syms)
     []
     atoms in
-  let projection x =
-    List.mem x arg_list in
-  (projection, arg_list)
+  let projection sym = List.mem sym sym_list in
+  (projection, sym_list)
 
 (* Create a new CHC representing the hypothetical summary of some procedure,
      given the info_structure that contains the formula (not yet a CHC) for
@@ -1725,18 +1724,19 @@ let make_chc_projection_and_symbols rule =
      attach it to the list of hypothesis predicate occurrences, and combine
      it with the constraint formula from info_structure to obtain the desired
      CHC. *)
-let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) linked_formula =
+let make_hypothetical_summary_chc info_structure fact_atom : (*'a*) (linked_formula * Chc.Atom.t) =
     let bounding_symbol_list = List.map
-      (fun (sym, corresponding_term) -> sym)
+      (fun (sym, corresponding_term) -> Srk.Syntax.mk_const srk sym)
       info_structure.ChoraCHC.bound_pairs in 
     let n_bounding_symbols = List.length bounding_symbol_list in
     let new_pred = make_aux_predicate n_bounding_symbols "AuxGlobalPredicate" in
-    let new_atom = Chc.Atom.of_tuple
-      (Srk.Syntax.int_of_symbol new_pred, bounding_symbol_list) in
-    (fact_atom, [new_atom], info_structure.call_abstraction_fmla)
+    let new_atom = Chc.Atom.construct
+      (Srk.Syntax.int_of_symbol new_pred) bounding_symbol_list in
+    (Chc.construct fact_atom [new_atom] info_structure.call_abstraction_fmla,
+     new_atom)
 
 let make_final_summary_chc summary_fmla fact_atom : (*'a*) linked_formula =
-    (fact_atom, [], summary_fmla)
+    Chc.construct fact_atom [] summary_fmla
 
 let summarize_nonlinear_scc scc rulemap summaries = 
   logf ~level:`info "SCC: non-super-linear@.";
@@ -1747,31 +1747,35 @@ let summarize_nonlinear_scc scc rulemap summaries =
         ProcMap.add p p_chcs subbed_chcs_map)
       ProcMap.empty
       scc in 
+  let subst_pred_num_map = ref IntMap.empty in
   let (bounds_map, hyp_sum_map, fact_atom_map) = 
     List.fold_left
       (fun (bounds_map, hyp_sum_map, fact_atom_map) p ->
         let p_chcs = ProcMap.find p subbed_chcs_map in
         let p_facts = 
           List.filter
-            (fun chc -> let (conc, hyps, phi) = chc in List.length hyps == 0)
+            (fun chc -> (*let (conc, hyps, phi) = chc in *) List.length chc.hyps == 0)
             p_chcs in
-        let p_fact = Chc.disjoin_linked_formulas p_facts in
+        let p_fact = Chc.disjoin p_facts in
         let (projection, pre_symbols) = make_chc_projection_and_symbols p_fact in
         (*let tr_symbols = [] in*)
           (* List.map (fun sym -> (sym, AuxVarModuleCHC.post_symbol sym)) pre_symbols in *)
-        let (fact_atom, fact_hyps, fact_phi) = p_fact in
-        (assert ((List.length fact_hyps) = 0));
+        (*let (fact_atom, fact_hyps, fact_phi) = p_fact in*)
+        (assert ((List.length p_fact.hyps) = 0));
         (* Call into ChoraCore to generalize the fact into a hypothetical summary formula,
              along with a list of bounding symbols, stored together in bounds_structure *)
         let bounds_structure = 
-          ChoraCHC.make_hypothetical_summary fact_phi projection in
+          ChoraCHC.make_hypothetical_summary p_fact.fmla projection in
         (* Concept: make the hypothetical summary formula into a hypothetical summary
              CHC by attaching a new ``auxiliary global variable'' predicate for 
              the predicate's bounding functions. *)
-        let hyp_sum_chc = make_hypothetical_summary_chc bounds_structure fact_atom in
+        let (hyp_sum_chc, aux_global_atom) = 
+            make_hypothetical_summary_chc bounds_structure p_fact.conc in
+        subst_pred_num_map := 
+            IntMap.add aux_global_atom.pred_num aux_global_atom !subst_pred_num_map;
         (ProcMap.add p bounds_structure bounds_map, 
          ProcMap.add p hyp_sum_chc hyp_sum_map,
-         ProcMap.add p fact_atom fact_atom_map))
+         ProcMap.add p p_fact.conc fact_atom_map))
       (ProcMap.empty, ProcMap.empty, ProcMap.empty)
       scc in
   let rec_fmla_map = 
@@ -1780,12 +1784,16 @@ let summarize_nonlinear_scc scc rulemap summaries =
         let p_chcs = ProcMap.find p subbed_chcs_map in
         let p_rules = 
           List.filter
-            (fun chc -> let (conc, hyps, phi) = chc in List.length hyps != 0)
+            (fun chc -> (*let (conc, hyps, phi) = chc in *) List.length chc.hyps != 0)
             p_chcs in
         let p_subbed_rules = subst_summaries p_rules hyp_sum_map in
-        let p_rec_rule = Chc.disjoin_linked_formulas p_subbed_rules in
-        let (_,_,rec_rule_phi) = p_rec_rule in
-        ProcMap.add p rec_rule_phi rec_fmla_map)
+        let p_rec_rule = Chc.disjoin p_subbed_rules in
+        let p_fact_atom = ProcMap.find p fact_atom_map in
+        let p_subst_pred_num_map = 
+            IntMap.add p_fact_atom.pred_num p_fact_atom !subst_pred_num_map in
+        let p_vocab_fixup = Chc.subst_equating_globally p_rec_rule p_subst_pred_num_map in
+        (*let (_,_,rec_rule_phi) = p_rec_rule in*)
+        ProcMap.add p p_vocab_fixup.fmla rec_fmla_map)
       ProcMap.empty
       scc in
   let depth_bound_fmla_map = 
@@ -1804,8 +1812,8 @@ let summarize_nonlinear_scc scc rulemap summaries =
       rec_fmla_map bounds_map depth_bound_fmla_map scc height_model excepting in
   let summary_chc_list = List.map
     (fun (p,fmla) -> 
-        let fact_atom = ProcMap.find p fact_atom_map in
-        (p, make_final_summary_chc fmla fact_atom))
+        let p_fact_atom = ProcMap.find p fact_atom_map in
+        (p, make_final_summary_chc fmla p_fact_atom))
     summary_fmla_list in 
   List.iter
     (fun (p,chc) -> summaries := (BatMap.Int.add p chc !summaries)) 
@@ -1840,12 +1848,12 @@ let detect_linear_scc scc rulemap summaries =
   List.fold_left (* for p in scc *)
     (fun is_linear p -> is_linear &&
       begin
-        let p_rules = BatMap.Int.find p rulemap in
-        List.fold_left (* for p_rule in p_rules *)
-          (fun is_linear_rule rule -> is_linear_rule &&
+        let p_chcs = BatMap.Int.find p rulemap in
+        List.fold_left (* for p_chc in p_chcs *)
+          (fun is_linear_chc chc -> is_linear_chc &&
              begin
-               let (conc, hyps, phi) = rule in
-               let n_scc_hyps_this_rule = 
+               (*let (conc, hyps, phi) = chc in*)
+               let n_scc_hyps_this_chc = 
                List.fold_left (* for hyp in hyps *)
                  (fun n_scc_hyps hyp ->
                    (*let (hyp_pred_num, args) = Chc.Atom.to_tuple hyp in*)
@@ -1853,14 +1861,15 @@ let detect_linear_scc scc rulemap summaries =
                    then n_scc_hyps
                    else (n_scc_hyps + 1))
                  0
-                 hyps in
-               (n_scc_hyps_this_rule <= 1)
+                 chc.hyps in
+               (n_scc_hyps_this_chc <= 1)
              end)
           true
-          p_rules
+          p_chcs
       end)
     true
     scc
+
 
 let summarize_linear_scc scc rulemap summaries = 
   logf ~level:`info "SCC: linear@.";
@@ -1912,27 +1921,27 @@ let print_summaries summaries =
         logf ~level:`always "  ")
     !summaries
 
-let analyze_ruleset rules query_int = 
+let analyze_ruleset chcs query_int = 
   let callgraph = List.fold_left
-    (fun graph rule ->
-      let conc_pred_id = Chc.conc_pred_id_of_linked_formula rule in
-      let hyp_pred_ids = Chc.hyp_pred_ids_of_linked_formula rule in
+    (fun graph chc ->
+      (*let conc_pred_id = Chc.conc_pred_id_of_linked_formula chc in
+      let hyp_pred_ids = Chc.hyp_pred_ids_of_linked_formula chc in*)
       List.fold_left
-        (fun g p -> CallGraph.add_edge g conc_pred_id p)
+        (fun g p -> CallGraph.add_edge g chc.conc.pred_num p)
         graph
-        hyp_pred_ids)
+        (List.map (fun arg -> arg.pred_num) chc.hyps))
     CallGraph.empty
-    rules
+    chcs
   in
   let rulemap = List.fold_left
-    (fun rulemap rule ->
-      let conc_pred_id = Chc.conc_pred_id_of_linked_formula rule in
+    (fun rulemap chc ->
+      (*let conc_pred_id = Chc.conc_pred_id_of_linked_formula chc in*)
       BatMap.Int.add
-        conc_pred_id
-        (rule::(BatMap.Int.find_default [] conc_pred_id rulemap))
+        chc.conc.pred_num
+        (chc::(BatMap.Int.find_default [] chc.conc.pred_num rulemap))
         rulemap)
     BatMap.Int.empty
-    rules
+    chcs
   in
   let callgraph_sccs = CallGraphSCCs.scc_list callgraph in
   (* print_condensed_graph callgraph_sccs; *)
@@ -1952,13 +1961,13 @@ let analyze_smt2 filename =
   let phi = SrkZ3.load_smtlib2 ~context:z3ctx parsingCtx str in
   let query_sym = Syntax.mk_symbol srk ~name:"QUERY" `TyBool in
   let query_int = Syntax.int_of_symbol query_sym in  
-  let rules = build_linked_formulas parsingCtx srk phi query_int in 
+  let chcs = build_linked_formulas parsingCtx srk phi query_int in 
   List.iter 
-    (fun rule -> 
+    (fun chc -> 
         logf_noendl ~level:`info "Incoming CHC: @.  ";
-        Chc.print srk rule) 
-    rules;
-  analyze_ruleset rules query_int
+        Chc.print srk chc) 
+    chcs;
+  analyze_ruleset chcs query_int
 
 let _ = 
   CmdLine.register_main_pass analyze_smt2;;
@@ -2001,5 +2010,3 @@ let _ =
      Arg.Set print_summaries_flag,
      " Print summaries");
   ();;
-
-*)
