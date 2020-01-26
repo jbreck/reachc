@@ -738,7 +738,8 @@ module Chc = struct
         plan_hyp_atom_list in 
     let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
     construct new_conc new_hyps new_phi
-    
+   
+  (* Replace *every* atom-arg with a fresh symbol *)
   let fresh_symbols_for_args chc =
     let new_sym atom arg_num = 
         let name = 
@@ -1611,6 +1612,8 @@ let summarize_nonlinear_scc scc rulemap summaries =
         let p_chcs = ProcMap.find p subbed_chcs_map in
         let p_facts = List.filter (fun chc -> List.length chc.hyps == 0) p_chcs in
         let p_fact = Chc.disjoin p_facts in
+        let p_fact = Chc.fresh_symbols_for_args p_fact in
+        (* now p_fact has a set of fresh symbols in its conclusion atom *)
         let (projection, pre_symbols) = make_chc_projection_and_symbols p_fact in
         (assert ((List.length p_fact.hyps) = 0));
         (* Call into ChoraCore to generalize the fact into a hypothetical summary formula,
@@ -1654,13 +1657,40 @@ let summarize_nonlinear_scc scc rulemap summaries =
         ProcMap.add p depth_bound_fmla depth_bound_fmla_map)
       ProcMap.empty
       scc in*)
+  (*(* Before allowing dual-height analysis *)
   let height_var = make_aux_variable "H" in 
   let height_sym = height_var.symbol in
-  let depth_bound_fmla_map = (* Non-trivial depth-bound summaries *) 
-      make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map in
-  (* When changing this to use dual-height, I need to compute "excepting" *)
   let height_model = ChoraCHC.RB height_var in
-  let excepting = Srk.Syntax.Symbol.Set.empty in
+  let excepting = Srk.Syntax.Symbol.Set.empty in*)
+  let scc_fact_atom_syms = 
+    List.concat
+      (List.map
+        (fun atom -> (List.map Chc.symbol_of_term atom.args))
+        (BatList.of_enum (ProcMap.values fact_atom_map))) in 
+  let simple_height = make_aux_variable (if !ChoraCHC.chora_dual then "RB" else "H") in 
+  let (height_model, excepting) = 
+    if !ChoraCHC.chora_dual then 
+      let rm = make_aux_variable "RM" in 
+      let mb = make_aux_variable "MB" in 
+      (* When we perform dual-height analysis, we make two copies each (one
+         "lower", one "upper") of most of the symbols in our vocabulary, but
+         there are some exceptions, i.e., symbols that should not be copied.
+         The variable excepting holds the list of such symbols *)
+      let excepting = 
+        List.fold_left 
+          (fun excepting sym -> Srk.Syntax.Symbol.Set.add sym excepting)
+          Srk.Syntax.Symbol.Set.empty
+          (simple_height.symbol::rm.symbol::mb.symbol::scc_fact_atom_syms) in 
+      (ChoraCHC.RB_RM_MB (simple_height (* that is, rb *), rm, mb), excepting)
+    else 
+      (ChoraCHC.RB (simple_height), Srk.Syntax.Symbol.Set.empty) in 
+  let depth_bound_fmla_map = (* Non-trivial depth-bound summaries *) 
+      make_depth_bound_summary 
+        scc 
+        subbed_chcs_map 
+        (post_symbol simple_height.symbol) 
+        fact_atom_map in
+  (* When changing this to use dual-height, I need to compute "excepting" *)
   let summary_fmla_list = 
     ChoraCHC.make_height_based_summaries
       rec_fmla_map bounds_map depth_bound_fmla_map scc height_model excepting in
@@ -1846,4 +1876,8 @@ let _ =
     ("-no-sub-opt",
      Arg.Clear substitution_optimization,
      " Use equations, never substitutions, when putting together CHCs");
+  CmdLine.register_config
+    ("-chora-dual",
+     Arg.Set ChoraCHC.chora_dual,
+     " Compute non-trivial lower bounds in addition to upper bounds"); (* "dual-height" analysis *)
   ();;
