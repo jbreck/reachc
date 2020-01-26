@@ -5,6 +5,7 @@ open Srk
 let cra_refine_flag = ref false
 let retry_flag = ref true
 let print_summaries_flag = ref false
+let substitution_optimization = ref true
 
 module CallGraph = Graph.Persistent.Digraph.ConcreteBidirectional(SrkUtil.Int)
 
@@ -460,6 +461,9 @@ module Chc = struct
     let construct (pred_num:pred_num_t) (args:atom_arg_t list) : atom_t = 
       {pred_num=pred_num;args=args}
 
+    let arg_of_symbol sym : atom_arg_t =
+      Srk.Syntax.mk_const srk sym
+
     let print ?(level=`info) srk atom = 
       let n_args = List.length atom.args in 
       logf_noendl ~level "%s(" 
@@ -487,6 +491,16 @@ module Chc = struct
       false
       chc.hyps
 
+  let symbol_of_term_opt term = 
+    match Syntax.destruct srk term with
+    | `App (func, args) when args = [] -> Some func
+    | _ -> None
+
+  let symbol_of_term ?(errormsg="fresh_symbols_for_args did not do its job") term = 
+    match Syntax.destruct srk term with
+    | `App (func, args) when args = [] -> func
+    | _ -> failwith errormsg
+
   (** Replace all skolem constants appearing in the CHC
    *    with fresh skolem constants *)
   let fresh_skolem_all chc =
@@ -509,12 +523,11 @@ module Chc = struct
     let new_phi = freshen_expr chc.fmla in
     construct new_conc_atom new_hyp_atoms new_phi
 
+  (* 
+  (* This old version generates equations only, never substitutions *)
   (* This function allows you to specify that some arguments within some
        atom should be replaced with a fresh variable even if other arguments
-       within the same atom are not being replaced.  In contrast, 
-       freshed_and_equate_args gives less fine-grained control, because it
-       forces you to either replace all the arguments of an atom or leave
-       all the arguments of that atom un-replaced. *)
+       within the same atom are not being replaced. *)
   let freshen_and_equate_args_finegrained chc plan_conc_atom plan_hyp_atom_list = 
     let chc = fresh_skolem_all chc in
     let old_atoms = chc.conc::chc.hyps in
@@ -549,11 +562,153 @@ module Chc = struct
     let new_hyps = List.tl new_atoms in
     let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
     construct new_conc new_hyps new_phi
-    
+  *) 
+
+  (* This function allows you to specify that some arguments within some
+       atom should be replaced with a fresh variable even if other arguments
+       within the same atom are not being replaced. *)
+  let freshen_and_equate_args_finegrained chc plan_conc_atom plan_hyp_atom_list = 
+    let chc = fresh_skolem_all chc in
+    let old_atoms = chc.conc::chc.hyps in
+    let plan_pseudo_atoms = plan_conc_atom::plan_hyp_atom_list in
+    let sub_targets = ref Syntax.Symbol.Set.empty in
+    let seen_symbols = ref Syntax.Symbol.Set.empty in
+    (if !substitution_optimization then 
+    List.iter
+      (fun plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          List.iter
+            (fun plan_arg_opt ->
+                match plan_arg_opt with
+                | None -> ()
+                | Some arg ->
+                  match symbol_of_term_opt arg with
+                  | None -> 
+                    let new_symbols = Syntax.symbols arg in
+                    seen_symbols := Syntax.Symbol.Set.union 
+                      !seen_symbols new_symbols;
+                    sub_targets := Syntax.Symbol.Set.diff
+                      !sub_targets new_symbols
+                  | Some sym -> 
+                    if Syntax.Symbol.Set.mem sym !seen_symbols
+                    then 
+                      sub_targets := 
+                        Syntax.Symbol.Set.remove sym !sub_targets
+                    else 
+                      (sub_targets := 
+                         Syntax.Symbol.Set.add sym !sub_targets;
+                       seen_symbols :=
+                         Syntax.Symbol.Set.add sym !seen_symbols))
+            plan_args)
+      plan_pseudo_atoms);
+    let sub_sources = ref Syntax.Symbol.Set.empty in
+    let seen_symbols = ref Syntax.Symbol.Set.empty in
+    (if !substitution_optimization then 
+    List.iter
+      (fun atom ->
+          List.iter
+            (fun arg ->
+                match symbol_of_term_opt arg with
+                | None -> 
+                  let new_symbols = Syntax.symbols arg in
+                  seen_symbols := Syntax.Symbol.Set.union 
+                    !seen_symbols new_symbols;
+                  sub_sources := Syntax.Symbol.Set.diff
+                    !sub_sources new_symbols
+                | Some sym -> 
+                  if Syntax.Symbol.Set.mem sym !seen_symbols
+                  then 
+                    sub_sources := 
+                      Syntax.Symbol.Set.remove sym !sub_sources
+                  else 
+                    (sub_sources := 
+                      Syntax.Symbol.Set.add sym !sub_sources;
+                    seen_symbols :=
+                      Syntax.Symbol.Set.add sym !seen_symbols))
+            atom.args)
+      old_atoms);
+    let check_substitution old_arg new_arg =
+      match symbol_of_term_opt old_arg with
+      | None -> None
+      | Some src_sym ->
+        if Syntax.Symbol.Set.mem src_sym !sub_sources
+        then (match symbol_of_term_opt new_arg with
+              | None -> None
+              | Some tgt_sym -> 
+                if Syntax.Symbol.Set.mem tgt_sym !sub_targets
+                then Some (src_sym,new_arg)
+                else None)
+        else None in
+    let substitutions = ref Syntax.Symbol.Map.empty in
+    let equations = List.concat (List.map2 
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          assert (old_atom.pred_num = plan_pred_num);
+          List.concat (List.map2 
+             (fun old_arg plan_arg_option -> 
+                 match plan_arg_option with
+                 | None -> [] (* no new equation *)
+                 | Some new_arg -> 
+                   if !substitution_optimization
+                   then match check_substitution old_arg new_arg with
+                        | None -> (* create equation *)
+                          [Syntax.mk_eq srk old_arg new_arg]
+                        | Some (src_sym,tgt_term) ->
+                          substitutions := 
+                            Syntax.Symbol.Map.add
+                              src_sym
+                              tgt_term
+                              !substitutions;
+                          [] (* substitution instead of equation *)
+                   else (* create equation *)
+                     [Syntax.mk_eq srk old_arg new_arg])
+             old_atom.args
+             plan_args))
+      old_atoms
+      plan_pseudo_atoms) in
+    let subbed_fmla = 
+      if !substitution_optimization
+      then Syntax.substitute_map srk !substitutions chc.fmla
+      else chc.fmla in
+    let new_atoms = List.map2
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          let new_args = List.map2
+            (fun old_arg plan_arg_option ->
+                match plan_arg_option with
+                | None -> old_arg
+                | Some new_arg -> new_arg)
+            old_atom.args
+            plan_args in
+          Atom.construct old_atom.pred_num new_args)
+      old_atoms
+      plan_pseudo_atoms in
+    let new_conc = List.hd new_atoms in
+    let new_hyps = List.tl new_atoms in
+    let new_phi = Syntax.mk_and srk (subbed_fmla::equations) in
+    construct new_conc new_hyps new_phi
+
+
   (* Coarse-grained version *)
-  (* FIXME: coarse-grained version could be rewritten to use the
-      finegrained version *)
-  let freshen_and_equate_args chc plan_conc_atom plan_hyp_atom_list = 
+  let freshen_and_equate_args chc plan_conc_atom plan_hyp_atom_list =
+    let somes x = List.map (fun y -> Some y) x in
+    let nones x = List.map (fun y -> None) x in
+    let fg_conc_atom =
+      match plan_conc_atom with
+      | None -> (chc.conc.pred_num, nones chc.conc.args)
+      | Some atom -> (chc.conc.pred_num, somes atom.args) in
+    let fg_hyp_atom_list = 
+      List.map2
+        (fun plan_hyp_atom hyp ->
+            match plan_hyp_atom with
+            | None -> (hyp.pred_num, nones hyp.args)
+            | Some atom -> (hyp.pred_num, somes atom.args))
+        plan_hyp_atom_list
+        chc.hyps in
+    freshen_and_equate_args_finegrained chc fg_conc_atom fg_hyp_atom_list
+
+  let freshen_and_equate_args_directly chc plan_conc_atom plan_hyp_atom_list =
+    (* Old version that doesn't boil it down to a call to the fine-grained *)
     let chc = fresh_skolem_all chc in
     let old_atoms = chc.conc::chc.hyps in
     let new_atoms = plan_conc_atom::plan_hyp_atom_list in
@@ -625,20 +780,6 @@ module Chc = struct
       (fun hyp -> Some (atom_with_new_syms hyp))
       chc.hyps in
     freshen_and_equate_args chc plan_conc plan_hyps
-
-  (* If term is exactly an occurrence of symbol s, return Some s, otherwise
-       return None *)
-  let symbol_of_term_opt term = 
-    match Syntax.destruct srk term with
-    | `App (func, args) when args = [] -> Some func
-    | _ -> None
-
-  (* If term is exactly an occurrence of symbol s, return s, otherwise
-       fail with an error message *)
-  let symbol_of_term ?(errormsg="fresh_symbols_for_args did not do its job") term = 
-    match Syntax.destruct srk term with
-    | `App (func, args) when args = [] -> func
-    | _ -> failwith errormsg
 
   (* This function makes all implicit constraints explicit. 
     
@@ -1194,7 +1335,7 @@ let build_rule_list_matrix scc rulemap summaries const_id =
       let p_rules = subst_summaries (BatMap.Int.find p rulemap) !summaries in
       List.iter 
         (fun rule ->
-           (* I think fresh_symbols_to_make_constrains_explicit is required
+           (* fresh_symbols_to_make_constrains_explicit may be required
                 for soundness here. *)
            let rule = Chc.fresh_symbols_to_make_constraints_explicit rule in
            match rule.hyps with
@@ -1454,7 +1595,7 @@ let summarize_nonlinear_scc scc rulemap summaries =
     List.fold_left
       (fun subbed_chcs_map p ->
         let p_chcs = BatMap.Int.find p rulemap in
-        (* I think fresh_symbols_to_make_constrains_explicit is required
+        (* fresh_symbols_to_make_constrains_explicit may be required
              for soundness here. *)
         let p_chcs = List.map
           (fun chc -> Chc.fresh_symbols_to_make_constraints_explicit chc)
@@ -1468,10 +1609,7 @@ let summarize_nonlinear_scc scc rulemap summaries =
     List.fold_left
       (fun (bounds_map, hyp_sum_map, fact_atom_map) p ->
         let p_chcs = ProcMap.find p subbed_chcs_map in
-        let p_facts = 
-          List.filter
-            (fun chc -> List.length chc.hyps == 0)
-            p_chcs in
+        let p_facts = List.filter (fun chc -> List.length chc.hyps == 0) p_chcs in
         let p_fact = Chc.disjoin p_facts in
         let (projection, pre_symbols) = make_chc_projection_and_symbols p_fact in
         (assert ((List.length p_fact.hyps) = 0));
@@ -1704,4 +1842,8 @@ let _ =
     ("-summaries",
      Arg.Set print_summaries_flag,
      " Print summaries");
+  CmdLine.register_config
+    ("-no-sub-opt",
+     Arg.Clear substitution_optimization,
+     " Use equations, never substitutions, when putting together CHCs");
   ();;
