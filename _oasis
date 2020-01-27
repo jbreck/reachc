@@ -1,5 +1,5 @@
 OASISFormat: 0.4
-Name:        cfind
+Name:        reachc
 Version:     0.1.1
 Synopsis:    Duet program analyzer
 Authors:     Jason Breck, John Cyphert, Zachary Kincaid, Thomas Reps
@@ -32,9 +32,9 @@ Executable bigtop
   CompiledObject: native
   Install:        false
 
-Executable cfind
-  Path:           cfind
-  MainIs:         cfind.ml
+Executable reachc
+  Path:           reachc
+  MainIs:         reachc.ml
   BuildDepends:   batteries, ppx_deriving, ppx_deriving.show, ppx_deriving.ord, ppx_deriving.eq, gmp, camlidl, apron, apron.boxMPQ, apron.octMPQ, apron.polkaMPQ, Z3, srk, cil, cil.default-features, ocrs
   CompiledObject: native
   Install:        false

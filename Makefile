@@ -2,13 +2,13 @@ SETUP = ocaml setup.ml
 
 all: build
 
-.PHONY: build cfind srk
+.PHONY: build reachc srk
 
 build: setup.ml setup.data
 	$(SETUP) -build
 
-cfind: setup.ml setup.data cfind/config.ml
-	ocamlbuild cfind/cfind.native
+reachc: setup.ml setup.data reachc/config.ml
+	ocamlbuild reachc/reachc.native
 
 #newton:
 #	ocamlbuild duet/duet.cmx duet/newton_interface.cmx duet/InterIR.cmx duet/duet.native
