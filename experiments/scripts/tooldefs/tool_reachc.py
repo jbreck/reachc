@@ -1,8 +1,8 @@
 import choraconfig, re, sys, os.path
 
-def cfind_assert_results(params) :
+def reachc_assert_results(params) :
     if "logpath" not in params : 
-        print "ERROR: cfind_assert_results was called without a path"
+        print "ERROR: reachc_assert_results was called without a path"
         sys.exit(0)
     #e.g., "Assertion on line 13 FAILED"
     results = list()
@@ -21,9 +21,9 @@ def cfind_assert_results(params) :
     return results
 
 tool = choraconfig.get_default_tool_dict() 
-tool["root"] = choraconfig.specify_tool_root_requirement("cfind","cfind.native")
-tool["displayname"] = "CFIND"
-tool["cmd"] = [tool["root"] + "/cfind.native","{filename}"]
-tool["assert_results"] = cfind_assert_results
+tool["root"] = choraconfig.specify_tool_root_requirement("reachc","reachc.native")
+tool["displayname"] = "ReACHC"
+tool["cmd"] = [tool["root"] + "/reachc.native","{filename}"]
+tool["assert_results"] = reachc_assert_results
 tool["error_callout"] = choraconfig.generic_error_callout
 

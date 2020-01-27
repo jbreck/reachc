@@ -1,6 +1,6 @@
 import choraconfig, os.path
 
-tool = choraconfig.clone_tool("cfind")
-tool["displayname"] = "CFIND:prsdpg"
-tool["shortname"] = "cfind:prsdpg"
-tool["cmd"] = [tool["root"] + "/cfind.native","-prsd-pg","{filename}"]
+tool = choraconfig.clone_tool("reachc")
+tool["displayname"] = "ReACHC:prsdpg"
+tool["shortname"] = "reachc:prsdpg"
+tool["cmd"] = [tool["root"] + "/reachc.native","-prsd-pg","{filename}"]
