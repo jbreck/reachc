@@ -34,10 +34,10 @@ install:
 	$(SETUP) -install
 
 clean:
-	$(SETUP) -clean
 	@rm -f setup.data
 	@rm -f setup.status
 	@rm -f setup.ml
+	$(SETUP) -clean
 	@./configure
 	@echo "NOTE: 'make clean' currently re-runs ./configure in an attempt to be helpful"
   
