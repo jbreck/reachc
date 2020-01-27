@@ -1328,12 +1328,12 @@ let subst_summaries chcs summaries =
        chc.hyps)
     chcs
 
-let build_rule_list_matrix scc rulemap summaries const_id = 
-  let rule_list_matrix = new_empty_matrix () in
+let build_chc_list_matrix scc chc_map summaries const_id = 
+  let chc_list_matrix = new_empty_matrix () in
   logf ~level:`info "  Finding rules";
   List.iter
     (fun p ->
-      let p_rules = subst_summaries (BatMap.Int.find p rulemap) !summaries in
+      let p_rules = subst_summaries (BatMap.Int.find p chc_map) !summaries in
       List.iter 
         (fun rule ->
            (* fresh_symbols_to_make_constrains_explicit may be required
@@ -1342,27 +1342,27 @@ let build_rule_list_matrix scc rulemap summaries const_id =
            match rule.hyps with
            | [hyp] ->
              modify_def_matrix_element 
-                rule_list_matrix p hyp.pred_num [] (fun rs -> rule::rs)
+                chc_list_matrix p hyp.pred_num [] (fun rs -> rule::rs)
            | [] ->
              modify_def_matrix_element 
-                rule_list_matrix p const_id [] (fun rs -> rule::rs)
+                chc_list_matrix p const_id [] (fun rs -> rule::rs)
            | _ -> failwith "Non-superlinear SCCs cannot be used by this sub-system")
         p_rules) 
     scc;
-  rule_list_matrix
+  chc_list_matrix
 
 (* First build a matrix whose entries are lists of chcs. 
    Then, disjoin the elements of each such list to produce
      a matrix whose entries are single chcs. *)
-let build_rule_matrix scc rulemap summaries const_id = 
-  let rule_list_matrix = 
-    build_rule_list_matrix scc rulemap summaries const_id in
-  let rule_matrix = new_empty_matrix () in
+let build_chc_matrix scc chc_map summaries const_id = 
+  let chc_list_matrix = 
+    build_chc_list_matrix scc chc_map summaries const_id in
+  let chc_matrix = new_empty_matrix () in
   logf ~level:`info "  Disjoining CHCs";
   List.iter
     (fun p ->
       matrix_row_iteri
-        rule_list_matrix
+        chc_list_matrix
         p
         (fun _ colid rules ->
           (*Format.printf "    rowid:%d colid:%d@." p colid;
@@ -1373,19 +1373,19 @@ let build_rule_matrix scc rulemap summaries const_id =
             Format.printf "@.")
           rules;*)
           let combined_rule = Chc.disjoin rules in
-          assign_matrix_element rule_matrix p colid combined_rule)
+          assign_matrix_element chc_matrix p colid combined_rule)
     ) scc;
-  rule_matrix  
+  chc_matrix  
 
-let eliminate_predicate rule_matrix const_id p =
+let eliminate_predicate chc_matrix const_id p =
   logf ~level:`info "   -Eliminating %a" 
     (Syntax.pp_symbol srk) 
     (Syntax.symbol_of_int p);
   (* First, eliminate p's direct recursion if it exists *)
   begin
-    if has_matrix_element rule_matrix p p then
+    if has_matrix_element chc_matrix p p then
       (* Obtain the direct-recursion entry from the matrix *)
-      let combined_rec = get_matrix_element rule_matrix p p in
+      let combined_rec = get_matrix_element chc_matrix p p in
       logf_noendl ~level:`info "    Combined recursive CHC:@.    ";
       Chc.print ~level:`info srk combined_rec;
       (* Star it *)
@@ -1400,19 +1400,19 @@ let eliminate_predicate rule_matrix const_id p =
       (* Use substitution to apply the starred rule onto 
          every other matrix entry corresponding to a rule 
          that has conclusion p *)
-      matrix_row_iteri rule_matrix p
+      matrix_row_iteri chc_matrix p
         (fun _ hyp nonrec_rule ->
           (* *)
           let sub_rule = Chc.subst_all tr_star_rule nonrec_rule in
-          assign_matrix_element rule_matrix p hyp sub_rule);
-      remove_matrix_element rule_matrix p p
+          assign_matrix_element chc_matrix p hyp sub_rule);
+      remove_matrix_element chc_matrix p p
       (* At this point, p's rules are all non-recursive *)
   end;
   (* Now, remove "uses" of p in other predicates' rules *)
-  matrix_col_iteri rule_matrix p 
+  matrix_col_iteri chc_matrix p 
     (fun q _ qrule ->
       (* qrule has hypothesis p and conclusion q *)
-      matrix_row_iteri rule_matrix p
+      matrix_row_iteri chc_matrix p
         (fun _ r prule ->
           assert (r != p);
           (* prule has hypothesis r and conclusion p *)
@@ -1420,32 +1420,32 @@ let eliminate_predicate rule_matrix const_id p =
              creating a new rule with hypothesis r and conclusion q, 
              thus eliminating a use of p. *)
           let sub_rule = Chc.subst_all qrule prule in
-          match get_matrix_element_opt rule_matrix q r with
+          match get_matrix_element_opt chc_matrix q r with
           | None ->
-            assign_matrix_element rule_matrix q r sub_rule
+            assign_matrix_element chc_matrix q r sub_rule
           | Some prev_rule ->
             let combined_rule = 
               Chc.disjoin [prev_rule; sub_rule] in
-            assign_matrix_element rule_matrix q r combined_rule));
+            assign_matrix_element chc_matrix q r combined_rule));
   (* Now, set all the entries in column p to zero *)
-  matrix_col_iteri rule_matrix p 
-    (fun q _ _ -> remove_matrix_element rule_matrix q p)
+  matrix_col_iteri chc_matrix p 
+    (fun q _ _ -> remove_matrix_element chc_matrix q p)
   (* At this point, p has been eliminated from the system *)
 
-let summarize_linear_scc scc rulemap summaries = 
+let summarize_linear_scc scc chc_map summaries = 
   logf ~level:`info "SCC: linear@.";
   let const_id = (* (List.hd (List.sort compare scc)) *) -1 in
   assert (not (List.mem const_id scc));
-  let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
+  let chc_matrix = build_chc_matrix scc chc_map summaries const_id in
   (* Now, eliminate predicates from this SCC one at a time*)
   logf ~level:`info "  Eliminating predicates";
-  List.iter (eliminate_predicate rule_matrix const_id) scc;
+  List.iter (eliminate_predicate chc_matrix const_id) scc;
   (* The remaining matrix entries are summaries; 
      they have no hypothesis predicate occurrences *)
   List.iter
     (fun p ->
-      match get_matrix_element_opt rule_matrix p const_id with
-      | None -> failwith "Missing const_id entry in rule_matrix"
+      match get_matrix_element_opt chc_matrix p const_id with
+      | None -> failwith "Missing const_id entry in chc_matrix"
       | Some rule -> summaries := (BatMap.Int.add p rule !summaries)) 
     scc
 
@@ -1610,8 +1610,8 @@ let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map fact_m
   let one = Syntax.mk_real srk QQ.one in
   let height_plus_one = Syntax.mk_add srk [height_plus_zero; one] in
   let height_equals_zero = Syntax.mk_eq srk height_plus_zero zero in
-  let aug_rulemap = List.fold_left
-    (fun aug_rulemap orig_p ->
+  let aug_chc_map = List.fold_left
+    (fun aug_chc_map orig_p ->
         let aug_pred = IntMap.find orig_p pred_map in
         let orig_chcs = ProcMap.find orig_p subbed_chcs_map in 
         let (orig_facts,orig_rules) = 
@@ -1659,12 +1659,12 @@ let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map fact_m
                     orig_rule.hyps)
                orig_rules) in
         let aug_chcs = aug_facts @ aug_rules in 
-        IntMap.add (Syntax.int_of_symbol aug_pred) aug_chcs aug_rulemap)
+        IntMap.add (Syntax.int_of_symbol aug_pred) aug_chcs aug_chc_map)
     IntMap.empty
     scc in 
   let aug_summaries = ref IntMap.empty in
   (* We re-use our linear-SCC-solving code for depth-bound analysis *)
-  summarize_linear_scc aug_scc aug_rulemap aug_summaries;
+  summarize_linear_scc aug_scc aug_chc_map aug_summaries;
   let depth_summary_map = List.fold_left
     (fun depth_summary_map orig_p ->
         let fact_atom = ProcMap.find orig_p fact_atom_map in
@@ -1695,12 +1695,12 @@ let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map fact_m
   logf ~level:`info "  Finished depth-bound analysis"; 
   depth_summary_map
 
-let summarize_nonlinear_scc scc rulemap summaries = 
+let summarize_nonlinear_scc scc chc_map summaries = 
   logf ~level:`info "SCC: non-super-linear@.";
   let subbed_chcs_map = 
     List.fold_left
       (fun subbed_chcs_map p ->
-        let p_chcs = BatMap.Int.find p rulemap in
+        let p_chcs = BatMap.Int.find p chc_map in
         (* fresh_symbols_to_make_constrains_explicit may be required
              for soundness here. *)
         let p_chcs = List.map
@@ -1801,11 +1801,11 @@ let summarize_nonlinear_scc scc rulemap summaries =
 
 (* ********************* Analyzer ************************* *)
 
-let detect_linear_scc scc rulemap summaries = 
+let detect_linear_scc scc chc_map summaries = 
   List.fold_left (* for p in scc *)
     (fun is_linear p -> is_linear &&
       begin
-        let p_chcs = BatMap.Int.find p rulemap in
+        let p_chcs = BatMap.Int.find p chc_map in
         List.fold_left (* for p_chc in p_chcs *)
           (fun is_linear_chc chc -> is_linear_chc &&
              begin
@@ -1825,8 +1825,8 @@ let detect_linear_scc scc rulemap summaries =
     true
     scc
 
-let analyze_query_predicate rule_matrix query_int const_id = 
-  match get_matrix_element_opt rule_matrix query_int const_id with
+let analyze_query_predicate chc_matrix query_int const_id = 
+  match get_matrix_element_opt chc_matrix query_int const_id with
   | None -> failwith "Missing final CHC"
   | Some final_chc -> 
     logf_noendl ~level:`info "Final CHC: @.  ";
@@ -1850,24 +1850,24 @@ let analyze_query_predicate rule_matrix query_int const_id =
         end
     end
 
-let handle_query_predicate scc rulemap summaries query_int = 
+let handle_query_predicate scc chc_map summaries query_int = 
   logf ~level:`info "Analysis of query predicate:@.";
   let const_id = -1 in
-  let rule_matrix = build_rule_matrix scc rulemap summaries const_id in
+  let chc_matrix = build_chc_matrix scc chc_map summaries const_id in
   (* The above call boils down to one disjoin_chc_ts call *)
-  analyze_query_predicate rule_matrix query_int const_id
+  analyze_query_predicate chc_matrix query_int const_id
 
-let analyze_scc finished_flag summaries rulemap query_int scc =
+let analyze_scc finished_flag summaries chc_map query_int scc =
   if !finished_flag then () else
   print_scc scc;
   match scc with
   | [p] when p = query_int ->
-    handle_query_predicate scc rulemap summaries query_int;
+    handle_query_predicate scc chc_map summaries query_int;
     finished_flag := true
   | _ -> 
-    if detect_linear_scc scc rulemap summaries 
-    then summarize_linear_scc scc rulemap summaries
-    else summarize_nonlinear_scc scc rulemap summaries
+    if detect_linear_scc scc chc_map summaries 
+    then summarize_linear_scc scc chc_map summaries
+    else summarize_nonlinear_scc scc chc_map summaries
 
 let print_summaries summaries = 
   logf ~level:`always "\n** Summaries as formulas **\n";
@@ -1893,12 +1893,12 @@ let analyze_ruleset chcs query_int =
     CallGraph.empty
     chcs
   in
-  let rulemap = List.fold_left
-    (fun rulemap chc ->
+  let chc_map = List.fold_left
+    (fun chc_map chc ->
       BatMap.Int.add
         chc.conc.pred_num
-        (chc::(BatMap.Int.find_default [] chc.conc.pred_num rulemap))
-        rulemap)
+        (chc::(BatMap.Int.find_default [] chc.conc.pred_num chc_map))
+        chc_map)
     BatMap.Int.empty
     chcs
   in
@@ -1907,7 +1907,7 @@ let analyze_ruleset chcs query_int =
   let summaries = ref BatMap.Int.empty in
   let finished_flag = ref false in
   List.iter
-    (analyze_scc finished_flag summaries rulemap query_int)
+    (analyze_scc finished_flag summaries chc_map query_int)
     callgraph_sccs;
   (if !print_summaries_flag then print_summaries summaries)
 
