@@ -116,7 +116,7 @@ def format_conclusion(conclusion, is_sat) :
         else :
             raise Exception("unrecognized conclusion: " + conclusion)
     elif is_sat == "sat" :
-        if (conclusion == "SAT"):
+        if (conclusion == "SAT" or conclusion == "SAT?"):
             return '<font color=\"#00AA00\">SAT</font>'
         elif (conclusion == "UNKNOWN"):
             return '<font color=\"#000000\">unknown</font>'
@@ -171,10 +171,13 @@ def aggregate_assert_results(assert_str, exitType, is_sat, style, error_str) :
         else :
             conc = "unknown"
             if all(P.startswith("UNSAT") for P in assert_parts) :
-                conc = "unsat"
+                #conc = "unsat"
+                conc = "UNSAT"
             if all(P.startswith("SAT") for P in assert_parts) :
-                conc = "sat"
-            out["conclusion"] = "(?):" + conc
+                #conc = "sat"
+                conc = "SAT"
+            #out["conclusion"] = "(?):" + conc
+            out["conclusion"] = conc + "?"
     else :
         out["conclusion"] = "UNKNOWN"
     conclusion_html = ("<span title='"+ 
@@ -368,20 +371,29 @@ def run(batch, stamp) :
             shutil.copyfile(filename, sourcedest)
             anyProblem = False
             for tool in tools : 
+                if tool.flag("annotation_only") : continue
                 handle, tmpfile = tempfile.mkstemp(suffix="choratmpfile.txt")
                 os.close(handle)
                 logpath = outrun + "/logs/" + nicename + "." + tool.ID + ".log"
                 preproc = None
+                converted = None
                 if "{preprocessed_filename}" in tool.get("cmd") :
                     preproc=filename
                     if preproc.endswith(".c") : preproc=preproc[:-2]
                     preproc+=".i"
                     subprocess.call(["gcc","-E",filename,"-o",preproc])
+                if "{converted_filename}" in tool.get("cmd") :
+                    converted=batch.get("convert_name")(filename)
+                    if not os.path.exists(converted) :
+                        print "Converted name: " + converted
+                        print "Converted name not found, defaulting to original"
+                        converted=filename
                 paramdict = {"filename":filename,
                              "directory":os.path.dirname(filename),
                              "tmpfile":tmpfile,
                              "logpath":logpath,
-                             "preprocessed_filename":preproc}
+                             "preprocessed_filename":preproc,
+                             "converted_filename":converted}
                 # Note that the precheck method may modify paramdict
                 if tool.hasattr("precheck") : tool.get("precheck")(paramdict)
                 cmd = [S.format(**paramdict) for S in tool.get("cmd")]
@@ -409,7 +421,8 @@ def run(batch, stamp) :
                                 anyProblem = True
                                 break
                             exitType = "default"
-                            sys.stdout.write("OK] ")
+                            msg = "OK] " if not batch.flag("instant_everything") else "OK"
+                            sys.stdout.write(msg)
                             sys.stdout.flush()
                             break
                         if timeTaken >= batch.get("timeout") :
@@ -443,6 +456,10 @@ def run(batch, stamp) :
                             sys.stdout.write("  ")
                             sys.stdout.flush()
                             anyProblem = True
+                    if batch.flag("instant_everything") :
+                            sys.stdout.write(":= "+",".join(R[0] for R in results)+"]")
+                            sys.stdout.write("  ")
+                            sys.stdout.flush()
                 runlogline += "runid="+stamp+"\t"
                 while len(runlogline) > 0 and runlogline[-1]=="\t" : runlogline = runlogline[:-1]
                 print >>runlog, runlogline
@@ -499,6 +516,12 @@ def format_run(outrun) :
             fk = "format_"
             if parts[0].startswith(fk) : parts[0]=parts[0][len(fk):]
             formatting[parts[0]]=parts[1]
+
+    if "reload_batch_during_format" in formatting:
+        batch_object = choraconfig.get_batch_by_ID(formatting["batchID"])
+    else :
+        batch_object = None
+
     cssname = "table.css"
     csspath = outrun+"/"+cssname
     if formatting["style"] == "rba" :
@@ -610,6 +633,7 @@ def format_run(outrun) :
                 print "HTML output available at: " + htmlpath
             elif formatting["style"] == "assert" :
                 if len(sourcefiles) == 0 : raise Exception("Empty list of source files")
+
                 # register rows and columns
                 table.register_row("head")
 
@@ -632,23 +656,30 @@ def format_run(outrun) :
                 table.register_column("benchmark")
                 table.register_column("logs")
                 for tool in tools : 
-                    table.register_column("tooltime/"+tool.ID)
-                    table.register_column("toolassert/"+tool.ID)
+                    if not tool.flag("annotation_only") :
+                        table.register_column("tooltime/"+tool.ID)
+                        table.register_column("toolassert/"+tool.ID)
+                    if tool.hasattr("annotation_callout") : table.register_column("toolannotation/"+tool.ID)
                 table.set_column_weight("benchmark",4.0)
                 for tool in tools : 
-                    table.set_column_weight("tooltime/"+tool.ID,1.0)
-                    table.set_column_weight("toolassert/"+tool.ID,1.0)
+                    if not tool.flag("annotation_only") :
+                        table.set_column_weight("tooltime/"+tool.ID,1.0)
+                        table.set_column_weight("toolassert/"+tool.ID,1.0)
+                    if tool.hasattr("annotation_callout") : table.set_column_weight("toolannotation/"+tool.ID,1.0)
 
                 # fill in table
                 table.set_row_attr("head","header",True)
                 table.set("head","benchmark","Benchmark ")
                 table.set("head","logs","Full<br>Logs")
                 for tool in tools :
-                    table.set("head","tooltime/"+tool.ID, tool.get("displayname") + "<br>Time (s)")
-                    table.set("head","toolassert/"+tool.ID, tool.get("displayname") + "<br>Assertions")
+                    if not tool.flag("annotation_only") :
+                        table.set("head","tooltime/"+tool.ID, tool.get("displayname") + "<br>Time (s)")
+                        table.set("head","toolassert/"+tool.ID, tool.get("displayname") + "<br>Assertions")
+                    if tool.hasattr("annotation_callout") : table.set_column_weight("toolannotation/"+tool.ID,1.0)
 
                 # finally, begin putting in the main table content
                 tool_sat_good = dict()
+                tool_definitive = dict()
                 tool_unsat_good = dict()
                 tool_time = dict()
                 previous_subsuite_tag = None
@@ -659,9 +690,12 @@ def format_run(outrun) :
                           previous_subsuite_tag != subsuite_tag)) :
                         if sourcefile != "@@FIRST" :
                             for tool in tools :
+                                if tool.flag("annotation_only") : continue
                                 table.set("totals/"+previous_subsuite_tag,"benchmark","Totals for<br>" + previous_subsuite_tag)
                                 table.set("totals/"+previous_subsuite_tag,"tooltime/"+tool.ID, str(count_get(tool_time,tool.ID)))
                                 a_summary =  ""
+                                a_summary += "#P="+str(int(count_get(tool_definitive,tool.ID)))+"/"+str(n_benchmarks)
+                                a_summary += "<br>"
                                 a_summary += "#T="+str(int(count_get(tool_sat_good,tool.ID)))+"/"+str(n_sat)
                                 a_summary += "<br>"
                                 a_summary += "#F="+str(int(count_get(tool_unsat_good,tool.ID)))+"/"+str(n_unsat)
@@ -671,6 +705,7 @@ def format_run(outrun) :
                         count_reset_all(tool_time)
                         n_sat = 0
                         n_unsat = 0
+                        n_benchmarks = 0
                     if sourcefile != "@@FIRST" and previous_subsuite_tag != subsuite_tag :
                         table.set("suiteheader/"+subsuite_tag,"benchmark",subsuite_tag)
                     if sourcefile is "@@LAST" : break
@@ -678,11 +713,18 @@ def format_run(outrun) :
                     is_sat = detect_sat_benchmark(sourcefile)
                     if is_sat == "sat" : n_sat += 1
                     if is_sat == "unsat" : n_unsat += 1
+                    n_benchmarks += 1
                     sourcefilekey = "src/"+sourcefile
                     previous_subsuite_tag = subsuite_tag
                     table.set(sourcefilekey,"benchmark","<a href='sources/"+sourcefile+"'>"+os.path.basename(sourcefile)+"</a>")
                     loglinks = list()
                     for tool in tools :
+                        if tool.hasattr("annotation_callout") :
+                            annotation = tool.get("annotation_callout")({"path":sourcefile,"batch":batch_object})
+                            table.set(sourcefilekey, "toolannotation/"+tool.ID, annotation)
+                        #if tool.hasattr("annotation_log") :
+                        #    loglinks.append(
+                        if tool.flag("annotation_only") : continue
                         timestring = reformat_float_string(datfile.get_default(sourcefile,tool.ID,"time",None),"%0.3f")
                         if timestring is None :
                             if warn_ragged : 
@@ -706,6 +748,8 @@ def format_run(outrun) :
                         assert_out = aggregate_assert_results(assert_str, exitType, is_sat, "short", error_str)
 
                         count_add(tool_sat_good, tool.ID, assert_out["sat_good"])
+                        count_add(tool_definitive, tool.ID, 
+                                1 if assert_out["conclusion"] in ["SAT","UNSAT","SAT?","UNSAT?"] else 0)
                         count_add(tool_unsat_good, tool.ID, assert_out["unsat_good"])
                         count_add(tool_time, tool.ID, timenumber)
 
