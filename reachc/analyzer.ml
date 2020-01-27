@@ -1,5 +1,5 @@
 module Log = Srk.Log
-include Srk.Log.Make(struct let name = "cfind" end)
+include Srk.Log.Make(struct let name = "reachc" end)
 open Srk
 
 let cra_refine_flag = ref false
