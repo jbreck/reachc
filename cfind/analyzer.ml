@@ -1491,6 +1491,63 @@ let make_hypothetical_summary_chc info_structure fact_atom : (chc_t * atom_t) =
 let make_final_summary_chc summary_fmla fact_atom : chc_t =
     Chc.construct fact_atom [] summary_fmla
 
+(*let depth_bound_formula_to_symbolic_bounds phi sym relevant_symbols = 
+  (*let level = if !chora_debug_squeeze then `always else `info in*)
+  let level = `always in
+  logf ~level " squeezing depth-bound formula to symbolic bounds formula...";
+  let exists x =
+    x = sym || (Srk.Syntax.Symbol.Set.mem x relevant_symbols)
+  in
+  let symbol_term = Syntax.mk_const srk sym in
+  let debug_list part = 
+     logf ~level "      -- inner bound list [";
+     List.iter (fun elt -> logf ~level "       %a" (Syntax.Term.pp srk) elt) part;
+     logf ~level "      -- inner bound list ]"
+  in
+  let debug_list_list parts = 
+     logf ~level "   -- outer bound list [";
+     List.iter (fun part -> debug_list part) parts;
+     logf ~level "   -- outer bound list ]"
+  in
+  let safer_disjoin parts = 
+    match parts with 
+    | [] -> Syntax.mk_true srk
+    | _ -> Syntax.mk_or srk parts
+  in
+  let to_formula parts = 
+    let (lower,upper) = parts in
+    logf ~level " lower bounds: ";
+    debug_list_list lower;
+    logf ~level " upper bounds: ";
+    debug_list_list upper;
+    let lower_bounds =
+      lower
+      |> List.map (fun case ->
+          case |> List.map (fun lower_bound -> Syntax.mk_leq srk lower_bound symbol_term)
+          |> Syntax.mk_and srk)
+      |> safer_disjoin
+    in
+    let upper_bounds =
+      upper
+      |> List.map (fun case ->
+          case |> List.map (fun upper_bound -> Syntax.mk_leq srk symbol_term upper_bound)
+          |> Syntax.mk_and srk)
+      |> safer_disjoin
+    in
+    Syntax.mk_and srk [lower_bounds; upper_bounds]
+  in
+  logf ~level " sbf-squeeze input: %a " (Syntax.Formula.pp srk) phi;
+  let formula_parts_wrapped = 
+      Wedge.symbolic_bounds_formula_list ~exists srk phi sym in
+  match formula_parts_wrapped with
+  | `Sat (formula_parts) -> 
+      let formula = to_formula formula_parts in 
+      logf ~level " sbf-squeeze output: %a " (Syntax.Formula.pp srk) formula;
+      formula
+  | `Unsat ->
+      logf ~level:`always " WARNING: sbf-squeeze got unsatisfiable depth formula!";
+      Syntax.mk_true srk*)
+
 let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map = 
   logf ~level:`info "  Beginning depth-bound analysis"; 
   let (aug_scc, pred_map) = List.fold_left 
