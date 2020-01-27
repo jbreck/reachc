@@ -3,9 +3,13 @@
 # Initially adding subtrees
 git remote add -f srk -t main -m main http://github.com/zkincaid/srk.git
 git subtree add --prefix srk srk --squash
+git remote add -f chc-comp19 -t master -m master https://github.com/chc-comp/chc-comp19-benchmarks.git
+git subtree add --prefix experiments/benchmarks/chc-comp19 chc-comp19 --squash
 
 # Updating subtrees 
 #    NOTE: Only a maintainer has to do these steps.
 #          Everybody else just does a single git pull.
 git fetch srk 
 git subtree pull --prefix srk srk main --squash
+git fetch chc-comp19
+git subtree pull --prefix experiments/benchmarks/chc-comp19 chc-comp19 master --squash
