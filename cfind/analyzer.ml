@@ -10,7 +10,6 @@ let substitution_optimization = ref true
 (* Non-linear CHC depth-bound squeezing options *)
 let chora_debug_squeeze = ref false
 let chora_squeeze_sb = ref true (* on by default, now *)
-(*let chora_squeeze_wedge = ref false *) (* not implemented *)
 let chora_squeeze_conjoin = ref false
 
 module CallGraph = Graph.Persistent.Digraph.ConcreteBidirectional(SrkUtil.Int)
@@ -353,13 +352,6 @@ module ProcModuleCHC = struct
       Format.sprintf "(%d,\"%s\")" proc_key name
     else
       Format.sprintf "(%d,?)" proc_key
-
-  (*let proc_name_string proc_key = 
-    if ProcMap.mem proc_key !procedure_names_map then 
-      let name = ProcMap.find proc_key !procedure_names_map in
-      Format.sprintf "%s" name
-    else
-      Format.sprintf "<unknown procedure(%d)>" proc_key*)
 end
 
 module ChoraCHC = ChoraCore.MakeChoraCore(ProcModuleCHC)(AuxVarModuleCHC)
@@ -1579,12 +1571,6 @@ let incorporate_depth_bound_squeezing
     then depth_bound_formula_to_symbolic_bounds 
            to_be_squeezed post_height_sym relevant_symbols
     else Syntax.mk_true srk in
-  (*let wedge_depth_bound_formula = 
-    if !chora_squeeze_wedge || !chora_debug_squeeze
-    then depth_bound_formula_to_wedge to_be_squeezed post_height_sym
-    else Syntax.mk_true srk in *)
-  (*let incorporate_dbf fmla = 
-    Syntax.mk_and srk [fmla; depth_bound_formula] in*)
   let incorporate_dbf fmla = 
       begin
         let case_split = 
@@ -1598,16 +1584,10 @@ let incorporate_depth_bound_squeezing
     in
   let final_depth_bound_formula = 
     if !chora_squeeze_sb
-    then ((*if !chora_squeeze_wedge 
-          then
-            failwith "ERROR: don't use -chora-squeeze and -chora-squeeze-sb simultaneously"
-          else*)
-            incorporate_dbf symbolic_bounds_depth_bound_formula)
-    else depth_bound_formula
-         (*(if !chora_squeeze_wedge 
-          then incorporate_dbf wedge_depth_bound_formula
-          else depth_bound_formula)*) in 
-  (* *)
+    then (incorporate_dbf symbolic_bounds_depth_bound_formula)
+    else depth_bound_formula in 
+  let level = if !chora_debug_squeeze then `always else `info in
+  logf ~level " sbf-squeeze output: %a " (Syntax.Formula.pp srk) final_depth_bound_formula;
   final_depth_bound_formula
 
 let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map fact_map = 
@@ -1775,19 +1755,6 @@ let summarize_nonlinear_scc scc rulemap summaries =
         ProcMap.add p p_vocab_fixup.fmla rec_fmla_map)
       ProcMap.empty
       scc in
-  (*(* Trivial depth-bound summaries *)
-    let depth_bound_fmla_map = 
-    List.fold_left
-      (fun depth_bound_fmla_map p ->
-        let depth_bound_fmla = Srk.Syntax.mk_true srk in
-        ProcMap.add p depth_bound_fmla depth_bound_fmla_map)
-      ProcMap.empty
-      scc in*)
-  (*(* Before allowing dual-height analysis *)
-  let height_var = make_aux_variable "H" in 
-  let height_sym = height_var.symbol in
-  let height_model = ChoraCHC.RB height_var in
-  let excepting = Srk.Syntax.Symbol.Set.empty in*)
   let scc_fact_atom_syms = 
     List.concat
       (List.map atom_syms (BatList.of_enum (ProcMap.values fact_atom_map))) in 
