@@ -1,0 +1,7 @@
+S srk/src
+S reachc
+B _build/srk/src
+B _build/srk/test
+B _build/reachc
+PKG batteries ppx_deriving ppx_deriving.show ppx_deriving.ord gmp camlidl apron Z3 ocrs ntl ocamlgraph cil
+EXT ppx_deriving
