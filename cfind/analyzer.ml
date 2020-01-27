@@ -7,6 +7,12 @@ let retry_flag = ref true
 let print_summaries_flag = ref false
 let substitution_optimization = ref true
 
+(* Non-linear CHC depth-bound squeezing options *)
+let chora_debug_squeeze = ref false
+let chora_squeeze_sb = ref true (* on by default, now *)
+(*let chora_squeeze_wedge = ref false *) (* not implemented *)
+let chora_squeeze_conjoin = ref false
+
 module CallGraph = Graph.Persistent.Digraph.ConcreteBidirectional(SrkUtil.Int)
 
 module CallSet = BatSet.Make((*IntPair*)SrkUtil.Int)
@@ -357,6 +363,8 @@ module ProcModuleCHC = struct
 end
 
 module ChoraCHC = ChoraCore.MakeChoraCore(ProcModuleCHC)(AuxVarModuleCHC)
+
+let _ = ChoraCHC.chora_dual := true
 
 open AuxVarModuleCHC
 open ProcModuleCHC
@@ -1491,12 +1499,15 @@ let make_hypothetical_summary_chc info_structure fact_atom : (chc_t * atom_t) =
 let make_final_summary_chc summary_fmla fact_atom : chc_t =
     Chc.construct fact_atom [] summary_fmla
 
-(*let depth_bound_formula_to_symbolic_bounds phi sym relevant_symbols = 
-  (*let level = if !chora_debug_squeeze then `always else `info in*)
-  let level = `always in
+(* This function assumes each atom arg is one symbol, which is an invariant
+     that holds at some points in this code but not at others *)
+let atom_syms atom = List.map Chc.symbol_of_term atom.args
+
+let depth_bound_formula_to_symbolic_bounds phi sym relevant_symbols = 
+  let level = if !chora_debug_squeeze then `always else `info in
   logf ~level " squeezing depth-bound formula to symbolic bounds formula...";
   let exists x =
-    x = sym || (Srk.Syntax.Symbol.Set.mem x relevant_symbols)
+    x = sym || (List.mem x relevant_symbols)
   in
   let symbol_term = Syntax.mk_const srk sym in
   let debug_list part = 
@@ -1546,9 +1557,60 @@ let make_final_summary_chc summary_fmla fact_atom : chc_t =
       formula
   | `Unsat ->
       logf ~level:`always " WARNING: sbf-squeeze got unsatisfiable depth formula!";
-      Syntax.mk_true srk*)
+      Syntax.mk_true srk
 
-let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map = 
+let incorporate_depth_bound_squeezing 
+      depth_bound_formula p post_height_sym fact_map =
+  let post_height_gt_zero = 
+    Syntax.mk_lt srk 
+      (Syntax.mk_zero srk)
+      (Syntax.mk_const srk post_height_sym) in
+  let post_height_eq_zero = 
+    Syntax.mk_eq srk 
+      (Syntax.mk_zero srk)
+      (Syntax.mk_const srk post_height_sym) in
+  let p_fact = ProcMap.find p fact_map in
+  let to_be_squeezed = 
+    (* sophisticated version: assume H' >= 0 inside squeezed version *) 
+    Syntax.mk_and srk [post_height_gt_zero; depth_bound_formula] in
+  let relevant_symbols = atom_syms p_fact.conc in
+  let symbolic_bounds_depth_bound_formula = 
+    if !chora_squeeze_sb || !chora_debug_squeeze
+    then depth_bound_formula_to_symbolic_bounds 
+           to_be_squeezed post_height_sym relevant_symbols
+    else Syntax.mk_true srk in
+  (*let wedge_depth_bound_formula = 
+    if !chora_squeeze_wedge || !chora_debug_squeeze
+    then depth_bound_formula_to_wedge to_be_squeezed post_height_sym
+    else Syntax.mk_true srk in *)
+  (*let incorporate_dbf fmla = 
+    Syntax.mk_and srk [fmla; depth_bound_formula] in*)
+  let incorporate_dbf fmla = 
+      begin
+        let case_split = 
+            Syntax.mk_or srk 
+              [(Syntax.mk_and srk [post_height_eq_zero; p_fact.fmla]);
+               (Syntax.mk_and srk [post_height_gt_zero; fmla])] in
+        if !chora_squeeze_conjoin
+        then Syntax.mk_and srk [depth_bound_formula; case_split]
+        else case_split
+      end
+    in
+  let final_depth_bound_formula = 
+    if !chora_squeeze_sb
+    then ((*if !chora_squeeze_wedge 
+          then
+            failwith "ERROR: don't use -chora-squeeze and -chora-squeeze-sb simultaneously"
+          else*)
+            incorporate_dbf symbolic_bounds_depth_bound_formula)
+    else depth_bound_formula
+         (*(if !chora_squeeze_wedge 
+          then incorporate_dbf wedge_depth_bound_formula
+          else depth_bound_formula)*) in 
+  (* *)
+  final_depth_bound_formula
+
+let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map fact_map = 
   logf ~level:`info "  Beginning depth-bound analysis"; 
   let (aug_scc, pred_map) = List.fold_left 
     (fun (aug_scc, pred_map) p ->
@@ -1633,7 +1695,13 @@ let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map =
         let vocab_fixup_chc = 
             Chc.subst_equating_globally aug_summary p_subst_pred_num_map in
         logf ~level:`info "  dbf%s:" (proc_name_string orig_p);
-        Chc.print ~level:`info srk vocab_fixup_chc; (* XXX *)
+        Chc.print ~level:`info srk vocab_fixup_chc;
+        (* At this point, vocab_fixup_chc has a formula that encodes the
+             depth-bounding information.  Now we "squeeze" that formula
+             to (heuristically) obtain a more "useful" form of it. *)
+        let final_depth_bound_fmla = 
+            incorporate_depth_bound_squeezing 
+              vocab_fixup_chc.fmla orig_p height_sym fact_map in
         (* What we're returning here, for each p, is the formula of the 
            summary of the augmented predicate DebugAugmented_Pp, with the
            vocabularies fixed up such that the height symbol is height_sym
@@ -1641,7 +1709,7 @@ let make_depth_bound_summary scc subbed_chcs_map height_sym fact_atom_map =
            match the conclusion atom of the entry in fact_atom_map for p.
            Basically, that is a formula that bounds the height of the
            recursion tree in terms of the arguments to Pp. *)
-        ProcMap.add orig_p vocab_fixup_chc.fmla depth_summary_map)
+        ProcMap.add orig_p final_depth_bound_fmla depth_summary_map)
     ProcMap.empty
     scc in
   logf ~level:`info "  Finished depth-bound analysis"; 
@@ -1663,9 +1731,9 @@ let summarize_nonlinear_scc scc rulemap summaries =
       ProcMap.empty
       scc in 
   let subst_pred_num_map = ref IntMap.empty in
-  let (bounds_map, hyp_sum_map, fact_atom_map) = 
+  let (bounds_map, hyp_sum_map, fact_atom_map, fact_map) = 
     List.fold_left
-      (fun (bounds_map, hyp_sum_map, fact_atom_map) p ->
+      (fun (bounds_map, hyp_sum_map, fact_atom_map, fact_map) p ->
         let p_chcs = ProcMap.find p subbed_chcs_map in
         let p_facts = List.filter (fun chc -> List.length chc.hyps == 0) p_chcs in
         let p_fact = Chc.disjoin p_facts in
@@ -1686,8 +1754,9 @@ let summarize_nonlinear_scc scc rulemap summaries =
             IntMap.add aux_global_atom.pred_num aux_global_atom !subst_pred_num_map;
         (ProcMap.add p bounds_structure bounds_map, 
          ProcMap.add p hyp_sum_chc hyp_sum_map,
-         ProcMap.add p p_fact.conc fact_atom_map))
-      (ProcMap.empty, ProcMap.empty, ProcMap.empty)
+         ProcMap.add p p_fact.conc fact_atom_map,
+         ProcMap.add p p_fact fact_map))
+      (ProcMap.empty, ProcMap.empty, ProcMap.empty, ProcMap.empty)
       scc in
   let rec_fmla_map = 
     List.fold_left
@@ -1721,9 +1790,7 @@ let summarize_nonlinear_scc scc rulemap summaries =
   let excepting = Srk.Syntax.Symbol.Set.empty in*)
   let scc_fact_atom_syms = 
     List.concat
-      (List.map
-        (fun atom -> (List.map Chc.symbol_of_term atom.args))
-        (BatList.of_enum (ProcMap.values fact_atom_map))) in 
+      (List.map atom_syms (BatList.of_enum (ProcMap.values fact_atom_map))) in 
   let simple_height = make_aux_variable (if !ChoraCHC.chora_dual then "RB" else "H") in 
   let (height_model, excepting) = 
     if !ChoraCHC.chora_dual then 
@@ -1735,7 +1802,11 @@ let summarize_nonlinear_scc scc rulemap summaries =
          The variable excepting holds the list of such symbols *)
       let excepting = 
         List.fold_left 
-          (fun excepting sym -> Srk.Syntax.Symbol.Set.add sym excepting)
+          (* Probably want post_symbol applied to the height ones and
+               don't need post_symbol applied to the non-height ones *)
+          (fun excepting sym -> 
+              let excepting = Srk.Syntax.Symbol.Set.add sym excepting in
+              Srk.Syntax.Symbol.Set.add (post_symbol sym) excepting)
           Srk.Syntax.Symbol.Set.empty
           (simple_height.symbol::rm.symbol::mb.symbol::scc_fact_atom_syms) in 
       (ChoraCHC.RB_RM_MB (simple_height (* that is, rb *), rm, mb), excepting)
@@ -1746,7 +1817,8 @@ let summarize_nonlinear_scc scc rulemap summaries =
         scc 
         subbed_chcs_map 
         (post_symbol simple_height.symbol) 
-        fact_atom_map in
+        fact_atom_map 
+        fact_map in
   (* When changing this to use dual-height, I need to compute "excepting" *)
   let summary_fmla_list = 
     ChoraCHC.make_height_based_summaries
@@ -1933,8 +2005,16 @@ let _ =
     ("-no-sub-opt",
      Arg.Clear substitution_optimization,
      " Use equations, never substitutions, when putting together CHCs");
-  CmdLine.register_config
+  (*CmdLine.register_config
     ("-chora-dual",
      Arg.Set ChoraCHC.chora_dual,
-     " Compute non-trivial lower bounds in addition to upper bounds"); (* "dual-height" analysis *)
+     " Compute non-trivial lower bounds in addition to upper bounds"); (* "dual-height" analysis *)*)
+  CmdLine.register_config
+    ("-no-chora-dual",
+     Arg.Clear ChoraCHC.chora_dual,
+     " Non-linear CHC 'CHORA' module should compute only upper bounds"); (* "dual-height" analysis *)
+  CmdLine.register_config
+    ("-chora-debug-squeeze",
+     Arg.Set chora_debug_squeeze,
+     " Print 'squeezed' depth-bound formula");
   ();;
